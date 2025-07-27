@@ -38,6 +38,7 @@ type HttpRule struct {
 type FuzzVersion struct {
 	Path         string `yaml:"path" json:"path"`
 	Pattern      string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+	Hash         string `yaml:"hash,omitempty" json:"hash,omitempty"`
 	VersionRange string `yaml:"version_range" json:"version_range"`
 }
 

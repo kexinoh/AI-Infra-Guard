@@ -3,6 +3,7 @@ package preload
 
 import (
 	"github.com/Tencent/AI-Infra-Guard/common/fingerprints/parser"
+	"github.com/Tencent/AI-Infra-Guard/common/utils"
 	"github.com/Tencent/AI-Infra-Guard/internal/gologger"
 	"github.com/Tencent/AI-Infra-Guard/pkg/httpx"
 	"regexp"
@@ -218,6 +219,10 @@ func EvalFpVersion(uri string, hp *httpx.HTTPX, fp parser.FingerPrint) (string, 
 			gologger.WithError(err).Debugln("请求失败")
 			continue
 		}
+		bodyHash := utils.BodyHash(resp.Data)
+		if fv.Hash != "" && fv.Hash != bodyHash {
+			continue
+		}
 		if fv.Pattern != "" {
 			reg, err := regexp.Compile(fv.Pattern)
 			if err != nil {
@@ -227,7 +232,7 @@ func EvalFpVersion(uri string, hp *httpx.HTTPX, fp parser.FingerPrint) (string, 
 			if !reg.MatchString(resp.DataStr) {
 				continue
 			}
-		} else if resp.StatusCode != 200 {
+		} else if fv.Hash == "" && resp.StatusCode != 200 {
 			continue
 		}
 		return fv.VersionRange, nil
