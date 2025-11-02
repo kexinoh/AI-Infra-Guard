@@ -350,6 +350,9 @@ func (r *Runner) extractContent(fullUrl string, resp *httpx.Response, respTime s
 			if item.Version != "" {
 				builder.WriteString(":")
 				builder.WriteString(item.Version)
+			} else if item.VersionRange != "" {
+				builder.WriteString(":")
+				builder.WriteString(item.VersionRange)
 			}
 			builder.WriteString("]")
 			builder.WriteString(" ")
@@ -538,6 +541,8 @@ func (r *Runner) handleOutput(wg *sizedwaitgroup.SizedWaitGroup) {
 				}
 				if fp.Version != "" {
 					fpString += ":" + fp.Version
+				} else if fp.VersionRange != "" {
+					fpString += ":" + fp.VersionRange
 				}
 			}
 			data = map[string]string{
@@ -608,6 +613,8 @@ func (r *Runner) writeResult(f *os.File, result HttpResult) {
 			}
 			if fp.Version != "" {
 				fpString += ":" + fp.Version
+			} else if fp.VersionRange != "" {
+				fpString += ":" + fp.VersionRange
 			}
 		}
 		if r.Options.Callback != nil {
