@@ -52,9 +52,10 @@ func formatFingerprints(fps []preload.FpResult) string {
 		return ""
 	}
 
-	parts := make([]string, 0, len(fps))
+parts := make([]string, 0, len(fps))
+	var builder strings.Builder
 	for _, fp := range fps {
-		builder := strings.Builder{}
+		builder.Reset()
 		builder.WriteString("[")
 		builder.WriteString(fp.Name)
 		if fp.Type != "" {
