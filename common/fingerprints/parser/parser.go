@@ -25,14 +25,24 @@ type Extractor struct {
 	Regex string `yaml:"regex" json:"regex"`
 }
 
+// VersionRangeRule defines range extraction for fuzzy version detection
+type VersionRangeRule struct {
+	Part  string `yaml:"part" json:"part"`
+	Group string `yaml:"group" json:"group"`
+	Regex string `yaml:"regex,omitempty" json:"regex,omitempty"`
+	Value string `yaml:"value,omitempty" json:"value,omitempty"`
+	Range string `yaml:"range" json:"range"`
+}
+
 // HttpRule 定义了HTTP请求匹配规则
 type HttpRule struct {
-	Method    string    `yaml:"method" json:"method"`
-	Path      string    `yaml:"path" json:"path"`
-	Matchers  []string  `yaml:"matchers" json:"matchers"`
-	Data      string    `yaml:"data,omitempty" json:"data,omitempty"`
-	dsl       []*Rule   `yaml:"-" json:"-"`
-	Extractor Extractor `yaml:"extractor,omitempty" json:"extractor,omitempty"`
+	Method    string             `yaml:"method" json:"method"`
+	Path      string             `yaml:"path" json:"path"`
+	Matchers  []string           `yaml:"matchers" json:"matchers"`
+	Data      string             `yaml:"data,omitempty" json:"data,omitempty"`
+	dsl       []*Rule            `yaml:"-" json:"-"`
+	Extractor Extractor          `yaml:"extractor,omitempty" json:"extractor,omitempty"`
+	Range     []VersionRangeRule `yaml:"versionRange,omitempty" json:"versionRange,omitempty"`
 }
 
 // GetDsl 返回解析后的DSL规则列表
@@ -110,8 +120,9 @@ func InitFingerPrintFromData(reader []byte) (*FingerPrint, error) {
 
 // FpResult 指纹结构体
 type FpResult struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
+	Name         string `json:"name"`
+	Version      string `json:"version,omitempty"`
+	VersionRange string `json:"version_range,omitempty"`
 }
 
 // Eval 评估配置是否匹配规则

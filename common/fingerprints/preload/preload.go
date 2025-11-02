@@ -30,9 +30,10 @@ func CollectedFpReqs() []FingerPrintFunc {
 
 // FpResult 指纹结构体
 type FpResult struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
-	Type    string `json:"type,omitempty"`
+	Name         string `json:"name"`
+	Version      string `json:"version,omitempty"`
+	VersionRange string `json:"version_range,omitempty"`
+	Type         string `json:"type,omitempty"`
 }
 
 // Runner 指纹识别运行器
@@ -94,7 +95,7 @@ func (r *Runner) RunFpReqs(uri string, concurrent int, faviconHash int32) []FpRe
 					if parser.Eval(&fpConfig, dsl) {
 						name := fp.Info.Name
 						version := ""
-						version, err := EvalFpVersion(uri, r.hp, fp)
+						version, versionRange, err := EvalFpVersion(uri, r.hp, fp)
 						if err != nil {
 							gologger.WithError(err).Errorln("获取版本失败")
 						}
@@ -104,9 +105,10 @@ func (r *Runner) RunFpReqs(uri string, concurrent int, faviconHash int32) []FpRe
 							type_ = ""
 						}
 						ret = append(ret, FpResult{
-							Name:    name,
-							Version: version,
-							Type:    type_,
+							Name:         name,
+							Version:      version,
+							VersionRange: versionRange,
+							Type:         type_,
 						})
 						mux.Unlock()
 						break
@@ -121,9 +123,10 @@ func (r *Runner) RunFpReqs(uri string, concurrent int, faviconHash int32) []FpRe
 			defer wg.Done()
 			if fpReq.Match(r.hp, uri) {
 				fpresult := FpResult{
-					Name:    fpReq.Name(),
-					Version: "",
-					Type:    "",
+					Name:         fpReq.Name(),
+					Version:      "",
+					VersionRange: "",
+					Type:         "",
 				}
 				version, err := fpReq.GetVersion(r.hp, uri)
 				if err == nil {
@@ -144,24 +147,39 @@ func (r *Runner) RunFpReqs(uri string, concurrent int, faviconHash int32) []FpRe
 // 如果存在相同名称的指纹，保留版本号不为空的结果
 func (r *Runner) Deduplication(results []FpResult) []FpResult {
 	var ret []FpResult
-	var dup = make(map[string]string)
+	type info struct {
+		version string
+		rng     string
+	}
+	dup := make(map[string]info)
 	for _, result := range results {
-		_, ok := dup[result.Name]
+		current, ok := dup[result.Name]
 		if !ok {
-			dup[result.Name] = result.Version
+			dup[result.Name] = info{version: result.Version, rng: result.VersionRange}
 			ret = append(ret, result)
-		} else {
-			if result.Version != "" && dup[result.Name] != result.Version {
-				dup[result.Name] = result.Version
-				// 删除原来
-				for i, v := range ret {
-					if v.Name == result.Name {
-						ret = append(ret[:i], ret[i+1:]...)
-						break
-					}
-				}
-				ret = append(ret, result)
+			continue
+		}
+
+		shouldReplace := false
+		if result.Version != "" {
+			if current.version == "" || current.version != result.Version {
+				shouldReplace = true
 			}
+		} else if result.VersionRange != "" {
+			if current.version == "" && (current.rng == "" || current.rng != result.VersionRange) {
+				shouldReplace = true
+			}
+		}
+
+		if shouldReplace {
+			dup[result.Name] = info{version: result.Version, rng: result.VersionRange}
+			for i, v := range ret {
+				if v.Name == result.Name {
+					ret = append(ret[:i], ret[i+1:]...)
+					break
+				}
+			}
+			ret = append(ret, result)
 		}
 	}
 	return ret
@@ -174,9 +192,21 @@ func (r *Runner) GetFps() []parser.FingerPrint {
 
 // EvalFpVersion 获取指定指纹的版本信息
 // 通过正则表达式从响应中提取版本号
-func EvalFpVersion(uri string, hp *httpx.HTTPX, fp parser.FingerPrint) (string, error) {
+func EvalFpVersion(uri string, hp *httpx.HTTPX, fp parser.FingerPrint) (string, string, error) {
+	var version string
+	ranges := make([]string, 0)
+
 	for _, req := range fp.Version {
-		resp, err := hp.Get(uri+req.Path, nil)
+		targetURL := uri + req.Path
+		var resp *httpx.Response
+		var err error
+
+		switch strings.ToUpper(req.Method) {
+		case "POST":
+			resp, err = hp.POST(targetURL, req.Data, nil)
+		default:
+			resp, err = hp.Get(targetURL, nil)
+		}
 		if err != nil {
 			gologger.WithError(err).Errorln("请求失败")
 			continue
@@ -187,29 +217,84 @@ func EvalFpVersion(uri string, hp *httpx.HTTPX, fp parser.FingerPrint) (string, 
 			Header: resp.GetHeaderRaw(),
 			Icon:   0,
 		}
-		version := ""
-		if req.Extractor.Regex != "" {
-			// 继续测试version
-			compileRegex, err := regexp.Compile("(?i)" + req.Extractor.Regex)
+		var extractedRanges []string
+		version, extractedRanges = extractVersionAndRanges(req, fpConfig, version)
+		ranges = append(ranges, extractedRanges...)
+	}
+
+	rangeExpr := ""
+	if len(ranges) > 0 {
+		rangeExpr = strings.Join(ranges, " && ")
+	}
+	return version, rangeExpr, nil
+}
+
+// extractVersionAndRanges evaluates extractor and version range definitions against a response configuration.
+func extractVersionAndRanges(req parser.HttpRule, fpConfig *parser.Config, currentVersion string) (string, []string) {
+	version := currentVersion
+	ranges := make([]string, 0)
+
+	if req.Extractor.Regex != "" && version == "" {
+		compileRegex, err := regexp.Compile("(?i)" + req.Extractor.Regex)
+		if err != nil {
+			gologger.WithError(err).Errorln("compile regex error", req.Extractor.Regex)
+		} else {
+			index, err := strconv.Atoi(req.Extractor.Group)
 			if err != nil {
-				gologger.WithError(err).Errorln("compile regex error", req.Extractor.Regex)
+				gologger.WithError(err).Errorln("parse part error", req.Extractor.Part)
 			} else {
-				index, err := strconv.Atoi(req.Extractor.Group)
-				if err != nil {
-					gologger.WithError(err).Errorln("parse part error", req.Extractor.Part)
-				} else {
-					body := fpConfig.Body
-					if req.Extractor.Part == "header" {
-						body = fpConfig.Header
-					}
-					submatches := compileRegex.FindStringSubmatch(body)
-					if submatches != nil {
-						version = submatches[index]
-					}
+				body := fpConfig.Body
+				if strings.EqualFold(req.Extractor.Part, "header") {
+					body = fpConfig.Header
+				}
+				submatches := compileRegex.FindStringSubmatch(body)
+				if submatches != nil && len(submatches) > index {
+					version = submatches[index]
 				}
 			}
 		}
-		return version, nil
 	}
-	return "", nil
+
+	for _, ranger := range req.Range {
+		rangeExpr := strings.TrimSpace(ranger.Range)
+		if rangeExpr == "" {
+			continue
+		}
+
+		value := strings.TrimSpace(ranger.Value)
+		if value == "" && ranger.Regex != "" {
+			compileRegex, err := regexp.Compile("(?i)" + ranger.Regex)
+			if err != nil {
+				gologger.WithError(err).Errorln("compile version range regex error", ranger.Regex)
+				continue
+			}
+			index := 1
+			if ranger.Group != "" {
+				index, err = strconv.Atoi(ranger.Group)
+				if err != nil {
+					gologger.WithError(err).Errorln("parse version range group error", ranger.Group)
+					continue
+				}
+			}
+			body := fpConfig.Body
+			if strings.EqualFold(ranger.Part, "header") {
+				body = fpConfig.Header
+			}
+			submatches := compileRegex.FindStringSubmatch(body)
+			if submatches == nil || len(submatches) <= index {
+				continue
+			}
+			value = strings.TrimSpace(submatches[index])
+		}
+
+		if value == "" {
+			continue
+		}
+
+		expr := strings.ReplaceAll(rangeExpr, "{{value}}", value)
+		expr = strings.ReplaceAll(expr, "{{ value }}", value)
+		ranges = append(ranges, expr)
+	}
+
+	return version, ranges
 }
