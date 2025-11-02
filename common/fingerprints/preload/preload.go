@@ -210,6 +210,21 @@ func EvalFpVersion(uri string, hp *httpx.HTTPX, fp parser.FingerPrint) (string, 
 			Header: resp.GetHeaderRaw(),
 			Icon:   0,
 		}
+		matched := true
+		if len(req.GetDsl()) > 0 {
+			matched = false
+			for _, dsl := range req.GetDsl() {
+				if parser.Eval(fpConfig, dsl) {
+					matched = true
+					break
+				}
+			}
+		}
+
+		if !matched {
+			continue
+		}
+
 		var extractedRanges []string
 		version, extractedRanges = extractVersionAndRanges(req, fpConfig, version)
 		ranges = append(ranges, extractedRanges...)
@@ -248,45 +263,9 @@ func extractVersionAndRanges(req parser.HttpRule, fpConfig *parser.Config, curre
 		}
 	}
 
-	for _, ranger := range req.Range {
-		rangeExpr := strings.TrimSpace(ranger.Range)
-		if rangeExpr == "" {
-			continue
-		}
-
-		value := strings.TrimSpace(ranger.Value)
-		if value == "" && ranger.Regex != "" {
-			compileRegex, err := regexp.Compile("(?i)" + ranger.Regex)
-			if err != nil {
-				gologger.WithError(err).Errorln("compile version range regex error", ranger.Regex)
-				continue
-			}
-			index := 1
-			if ranger.Group != "" {
-				index, err = strconv.Atoi(ranger.Group)
-				if err != nil {
-					gologger.WithError(err).Errorln("parse version range group error", ranger.Group)
-					continue
-				}
-			}
-			body := fpConfig.Body
-			if strings.EqualFold(ranger.Part, "header") {
-				body = fpConfig.Header
-			}
-			submatches := compileRegex.FindStringSubmatch(body)
-			if submatches == nil || len(submatches) <= index {
-				continue
-			}
-			value = strings.TrimSpace(submatches[index])
-		}
-
-		if value == "" {
-			continue
-		}
-
-		expr := strings.ReplaceAll(rangeExpr, "{{value}}", value)
-		expr = strings.ReplaceAll(expr, "{{ value }}", value)
-		ranges = append(ranges, expr)
+	rangeExpr := strings.TrimSpace(req.VersionRange)
+	if rangeExpr != "" {
+		ranges = append(ranges, rangeExpr)
 	}
 
 	return version, ranges
