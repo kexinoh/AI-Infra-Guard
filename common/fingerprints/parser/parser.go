@@ -25,24 +25,15 @@ type Extractor struct {
 	Regex string `yaml:"regex" json:"regex"`
 }
 
-// VersionRangeRule defines range extraction for fuzzy version detection
-type VersionRangeRule struct {
-	Part  string `yaml:"part" json:"part"`
-	Group string `yaml:"group" json:"group"`
-	Regex string `yaml:"regex,omitempty" json:"regex,omitempty"`
-	Value string `yaml:"value,omitempty" json:"value,omitempty"`
-	Range string `yaml:"range" json:"range"`
-}
-
 // HttpRule 定义了HTTP请求匹配规则
 type HttpRule struct {
-	Method    string             `yaml:"method" json:"method"`
-	Path      string             `yaml:"path" json:"path"`
-	Matchers  []string           `yaml:"matchers" json:"matchers"`
-	Data      string             `yaml:"data,omitempty" json:"data,omitempty"`
-	dsl       []*Rule            `yaml:"-" json:"-"`
-	Extractor Extractor          `yaml:"extractor,omitempty" json:"extractor,omitempty"`
-	Range     []VersionRangeRule `yaml:"versionRange,omitempty" json:"versionRange,omitempty"`
+	Method       string    `yaml:"method" json:"method"`
+	Path         string    `yaml:"path" json:"path"`
+	Matchers     []string  `yaml:"matchers" json:"matchers"`
+	Data         string    `yaml:"data,omitempty" json:"data,omitempty"`
+	dsl          []*Rule   `yaml:"-" json:"-"`
+	Extractor    Extractor `yaml:"extractor,omitempty" json:"extractor,omitempty"`
+	VersionRange string    `yaml:"version_range,omitempty" json:"version_range,omitempty"`
 }
 
 // GetDsl 返回解析后的DSL规则列表
@@ -104,18 +95,30 @@ func InitFingerPrintFromData(reader []byte) (*FingerPrint, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i, rule := range fp.Http {
-		dsls := make([]*Rule, 0)
+	if err = parseDslRules(fp.Http); err != nil {
+		return nil, err
+	}
+
+	if err = parseDslRules(fp.Version); err != nil {
+		return nil, err
+	}
+	return &fp, err
+}
+
+// parseDslRules 解析规则中的匹配表达式
+func parseDslRules(rules []HttpRule) error {
+	for i, rule := range rules {
+		dsls := make([]*Rule, 0, len(rule.Matchers))
 		for _, matcher := range rule.Matchers {
 			dsl, err := transfromRule(matcher)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			dsls = append(dsls, dsl)
 		}
-		fp.Http[i].dsl = dsls
+		rules[i].dsl = dsls
 	}
-	return &fp, err
+	return nil
 }
 
 // FpResult 指纹结构体
