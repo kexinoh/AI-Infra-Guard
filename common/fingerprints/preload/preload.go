@@ -146,41 +146,34 @@ func (r *Runner) RunFpReqs(uri string, concurrent int, faviconHash int32) []FpRe
 // Deduplication 对指纹识别结果进行去重
 // 如果存在相同名称的指纹，保留版本号不为空的结果
 func (r *Runner) Deduplication(results []FpResult) []FpResult {
-	var ret []FpResult
-	type info struct {
-		version string
-		rng     string
-	}
-	dup := make(map[string]info)
+	bestResults := make(map[string]FpResult)
+
 	for _, result := range results {
-		current, ok := dup[result.Name]
+		current, ok := bestResults[result.Name]
 		if !ok {
-			dup[result.Name] = info{version: result.Version, rng: result.VersionRange}
-			ret = append(ret, result)
+			bestResults[result.Name] = result
 			continue
 		}
 
 		shouldReplace := false
 		if result.Version != "" {
-			if current.version == "" || current.version != result.Version {
+			if current.Version == "" || current.Version != result.Version {
 				shouldReplace = true
 			}
 		} else if result.VersionRange != "" {
-			if current.version == "" && (current.rng == "" || current.rng != result.VersionRange) {
+			if current.Version == "" && (current.VersionRange == "" || current.VersionRange != result.VersionRange) {
 				shouldReplace = true
 			}
 		}
 
 		if shouldReplace {
-			dup[result.Name] = info{version: result.Version, rng: result.VersionRange}
-			for i, v := range ret {
-				if v.Name == result.Name {
-					ret = append(ret[:i], ret[i+1:]...)
-					break
-				}
-			}
-			ret = append(ret, result)
+			bestResults[result.Name] = result
 		}
+	}
+
+	ret := make([]FpResult, 0, len(bestResults))
+	for _, v := range bestResults {
+		ret = append(ret, v)
 	}
 	return ret
 }

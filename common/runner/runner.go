@@ -47,6 +47,34 @@ type Runner struct {
 	callback    func(interface{})
 }
 
+func formatFingerprints(fps []preload.FpResult) string {
+	if len(fps) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(fps))
+	for _, fp := range fps {
+		builder := strings.Builder{}
+		builder.WriteString("[")
+		builder.WriteString(fp.Name)
+		if fp.Type != "" {
+			builder.WriteString(":")
+			builder.WriteString(fp.Type)
+		}
+		if fp.Version != "" {
+			builder.WriteString(":")
+			builder.WriteString(fp.Version)
+		} else if fp.VersionRange != "" {
+			builder.WriteString(":")
+			builder.WriteString(fp.VersionRange)
+		}
+		builder.WriteString("]")
+		parts = append(parts, builder.String())
+	}
+
+	return strings.Join(parts, " ")
+}
+
 type Step01 struct {
 	Text string
 }
@@ -533,18 +561,7 @@ func (r *Runner) handleOutput(wg *sizedwaitgroup.SizedWaitGroup) {
 		var showVulTable bool = false
 		for _, row := range results {
 			data := make(map[string]string)
-			var fpString string = ""
-			for _, fp := range row.Fingers {
-				fpString += fp.Name
-				if fp.Type != "" {
-					fpString += ":" + fp.Type
-				}
-				if fp.Version != "" {
-					fpString += ":" + fp.Version
-				} else if fp.VersionRange != "" {
-					fpString += ":" + fp.VersionRange
-				}
-			}
+			fpString := formatFingerprints(row.Fingers)
 			data = map[string]string{
 				"Target":      row.URL,
 				"StatusCode":  fmt.Sprintf("%d", row.StatusCode),
@@ -605,18 +622,7 @@ func (r *Runner) writeResult(f *os.File, result HttpResult) {
 		for _, item := range result.Advisories {
 			vuls = append(vuls, item.Info)
 		}
-		var fpString string = ""
-		for _, fp := range result.Fingers {
-			fpString += fp.Name
-			if fp.Type != "" {
-				fpString += ":" + fp.Type
-			}
-			if fp.Version != "" {
-				fpString += ":" + fp.Version
-			} else if fp.VersionRange != "" {
-				fpString += ":" + fp.VersionRange
-			}
-		}
+		fpString := formatFingerprints(result.Fingers)
 		if r.Options.Callback != nil {
 			r.Options.Callback(CallbackScanResult{
 				TargetURL:       result.URL,
