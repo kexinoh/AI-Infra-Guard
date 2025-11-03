@@ -4,6 +4,7 @@ import (
 	"github.com/Tencent/AI-Infra-Guard/pkg/httpx"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 )
@@ -84,4 +85,31 @@ func TestParseAdvisorLatestTokens(t *testing.T) {
 	b := dsl.AdvisoryEval(config)
 	t.Log(b)
 	//assert.Equal(t, dsl.AdvisoryEval(config), true)
+}
+
+func TestInitFingerPrintFromDataWithVersionRange(t *testing.T) {
+	yamlContent := []byte(`info:
+  name: testfp
+  author: test
+  severity: info
+http:
+  - method: GET
+    path: '/'
+    matchers:
+      - body=""
+version:
+  - method: GET
+    path: '/meta'
+    extractor:
+      part: body
+      group: '1'
+      regex: 'version:(\\d+\\.\\d+)'
+    version_range: '>=0.8.0'
+`)
+
+	fp, err := InitFingerPrintFromData(yamlContent)
+	require.NoError(t, err)
+	require.Len(t, fp.Version, 1)
+	require.Equal(t, ">=0.8.0", fp.Version[0].VersionRange)
+	require.Equal(t, "GET", fp.Version[0].Method)
 }
