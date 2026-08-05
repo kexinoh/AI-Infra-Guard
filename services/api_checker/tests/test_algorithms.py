@@ -1,4 +1,5 @@
 import json
+import tempfile
 import threading
 import time
 import unittest
@@ -124,6 +125,37 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(496, preview["iterations"])
         self.assertEqual(5000, current["iterations"])
         self.assertNotEqual(preview["rawData"], current["rawData"])
+
+    def test_save_baselines_keeps_numeric_arrays_on_single_lines(self):
+        baseline = common.build_baseline(
+            "Model A",
+            "model-a",
+            "openai",
+            [1, 2, 2],
+            no_think=True,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baselines.json"
+            common.save_baselines([baseline], str(path))
+            text = path.read_text(encoding="utf-8")
+            restored = json.loads(text)
+            mode = path.stat().st_mode & 0o777
+
+        lines = [line.strip() for line in text.splitlines()]
+        distribution_line = next(
+            line for line in lines if line.startswith('"distribution": [')
+        )
+        counts_line = next(
+            line for line in lines if line.startswith('"counts": [')
+        )
+        raw_data_line = next(
+            line for line in lines if line.startswith('"rawData": [')
+        )
+        self.assertTrue(distribution_line.endswith("],"))
+        self.assertTrue(counts_line.endswith("],"))
+        self.assertEqual('"rawData": [1, 2, 2]', raw_data_line)
+        self.assertEqual([baseline], restored)
+        self.assertEqual(0o644, mode)
 
     def test_calculate_stats(self):
         stats = common.calculate_stats([1, 2, 2, 5])

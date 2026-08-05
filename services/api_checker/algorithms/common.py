@@ -160,14 +160,54 @@ def build_baseline(name, model, api_type, results, no_think=False):
     }
 
 
+def _json_with_inline_numeric_arrays(value, level=0):
+    """Pretty-print JSON while keeping numeric data vectors on one line."""
+    indent = "  " * level
+    child_indent = "  " * (level + 1)
+    if isinstance(value, list):
+        if all(
+            isinstance(item, (int, float)) and not isinstance(item, bool)
+            for item in value
+        ):
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(", ", ": "),
+            )
+        if not value:
+            return "[]"
+        items = [
+            child_indent + _json_with_inline_numeric_arrays(item, level + 1)
+            for item in value
+        ]
+        return "[\n" + ",\n".join(items) + "\n" + indent + "]"
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = [
+            child_indent
+            + json.dumps(key, ensure_ascii=False)
+            + ": "
+            + _json_with_inline_numeric_arrays(item, level + 1)
+            for key, item in value.items()
+        ]
+        return "{\n" + ",\n".join(items) + "\n" + indent + "}"
+    return json.dumps(value, ensure_ascii=False)
+
+
 def save_baselines(baselines, filepath=DEFAULT_BASELINES_PATH):
     directory = os.path.dirname(os.path.abspath(filepath))
     os.makedirs(directory, exist_ok=True)
+    try:
+        file_mode = os.stat(filepath).st_mode & 0o777
+    except FileNotFoundError:
+        file_mode = 0o644
     fd, temporary_path = tempfile.mkstemp(prefix=".baselines-", suffix=".json", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(baselines, f, ensure_ascii=False, indent=2)
+            f.write(_json_with_inline_numeric_arrays(baselines))
             f.write("\n")
+        os.chmod(temporary_path, file_mode)
         os.replace(temporary_path, filepath)
     except Exception:
         try:
