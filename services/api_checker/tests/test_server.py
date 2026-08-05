@@ -607,29 +607,38 @@ class ServerContractTests(unittest.TestCase):
             "_posterior": 1.0,
             "_forgery_status": "supported",
         }))
-        self.assertEqual(0.0, server._fingerprint_score({
+        self.assertEqual(70.0, server._fingerprint_score({
             "_posterior": 1.0,
             "_forgery_status": "suspected_known",
         }))
-        self.assertEqual(1.0, server._fingerprint_score({
+        self.assertEqual(70.0, server._fingerprint_score({
             "_posterior": 0.99,
             "_forgery_status": "unknown_anomaly",
         }))
-        self.assertEqual(50.0, server._fingerprint_score({
+        self.assertEqual(70.0, server._fingerprint_score({
             "_posterior": 0.1,
             "_forgery_status": "unknown_anomaly",
         }))
+        self.assertEqual(70.0, server._fingerprint_score({
+            "_posterior": 0.2,
+            "_forgery_status": "supported",
+        }))
 
         parts = {
-            "audit": {"_risk_score": 0},
+            "audit": {
+                "verdict": "LOW",
+                "_risk_score": 0,
+                "findings": [],
+                "probe_results": [],
+            },
             "fingerprint": {
                 "_posterior": 1.0,
                 "_forgery_status": "suspected_known",
             },
         }
-        self.assertEqual(0.0, server._result_score("full", parts))
+        self.assertEqual(70.0, server._result_score("full", parts))
         self.assertEqual(
-            0.0,
+            70.0,
             server._summary_component_scores(parts)["fingerprint"],
         )
 
@@ -694,7 +703,7 @@ class ServerContractTests(unittest.TestCase):
         )
         self.assertEqual(0.0, server._result_score("quick", parts, errors))
 
-    def test_malformed_component_scores_fail_closed_without_exceptions(self):
+    def test_incomplete_fingerprint_scores_50_without_exceptions(self):
         malformed_audit = {
             "verdict": "LOW",
             "_risk_score": "zero",
@@ -707,7 +716,34 @@ class ServerContractTests(unittest.TestCase):
         }
 
         self.assertEqual(0.0, server._audit_score(malformed_audit))
-        self.assertEqual(0.0, server._fingerprint_score(malformed_fingerprint))
+        self.assertEqual(50.0, server._fingerprint_score(malformed_fingerprint))
+        self.assertEqual(50.0, server._fingerprint_score({}))
+        safe_audit = {
+            "verdict": "LOW",
+            "_risk_score": 0,
+            "findings": [],
+            "probe_results": [],
+        }
+        self.assertEqual(
+            50.0,
+            server._result_score(
+                "full",
+                {"audit": safe_audit},
+                {"fingerprint": "timeout"},
+            ),
+        )
+        self.assertEqual(
+            50.0,
+            server._result_score("full", {"audit": safe_audit}, {}),
+        )
+        self.assertEqual(
+            50.0,
+            server._summary_component_scores(
+                {"audit": safe_audit},
+                "full",
+                {"fingerprint": "timeout"},
+            )["fingerprint"],
+        )
         self.assertEqual(
             "inconclusive",
             server._overall_verdict(

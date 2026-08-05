@@ -122,7 +122,7 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual("DeepSeek-V4-Flash-Preview", preview["name"])
         self.assertEqual("DeepSeek-V4-Flash", current["name"])
         self.assertEqual(496, preview["iterations"])
-        self.assertEqual(496, current["iterations"])
+        self.assertEqual(5000, current["iterations"])
         self.assertNotEqual(preview["rawData"], current["rawData"])
 
     def test_calculate_stats(self):

@@ -98,6 +98,8 @@ else:
 
 VERSION = "1.7.0"
 FINGERPRINT_CONCURRENCY = 5
+FINGERPRINT_MAX_DEDUCTION = 30.0
+FINGERPRINT_INCOMPLETE_SCORE = 50.0
 AUDIT_PROFILE = "full"
 QUICK_AUDIT_REQUEST_COUNT = 7
 SUMMARY_REQUEST_COUNT = 1
@@ -1059,10 +1061,16 @@ def _result_score(
         scores.append(_audit_score(parts["audit"]))
     if parts.get("signature"):
         scores.append(_signature_score(parts["signature"]))
-    if algorithm == "full" and parts.get("fingerprint"):
-        scores.append(_fingerprint_score(parts["fingerprint"]))
+    if algorithm == "full":
+        scores.append(_fingerprint_score(parts.get("fingerprint") or {}))
     if errors:
-        scores.append(0.0)
+        if algorithm == "full" and "fingerprint" in errors:
+            scores.append(FINGERPRINT_INCOMPLETE_SCORE)
+        if any(
+            component != "fingerprint" or algorithm != "full"
+            for component in errors
+        ):
+            scores.append(0.0)
     return round(min(scores), 1) if scores else 0.0
 
 
@@ -1112,17 +1120,21 @@ def _fingerprint_score(fingerprint: dict) -> float:
     """将“识别置信度”转换为“声明模型可信分”，避免替身高置信时反得高分。"""
     posterior_value = fingerprint.get("_posterior")
     if not _is_number(posterior_value):
-        return 0.0
+        return FINGERPRINT_INCOMPLETE_SCORE
     posterior = max(
         0.0,
         min(1.0, float(posterior_value)),
     )
     status = fingerprint.get("_forgery_status")
+    minimum_score = 100.0 - FINGERPRINT_MAX_DEDUCTION
     if status == "supported":
-        return round(posterior * 100, 1)
-    if status in {"suspected_known", "unknown_anomaly"}:
-        return round(min((1.0 - posterior) * 100, 50.0), 1)
-    return 0.0
+        score = posterior * 100
+    elif status in {"suspected_known", "unknown_anomaly"}:
+        score = min((1.0 - posterior) * 100, 50.0)
+    else:
+        return FINGERPRINT_INCOMPLETE_SCORE
+    # 风险判定与扣分解耦：失败仍判风险，但模型指纹最多影响综合分 30 分。
+    return round(max(minimum_score, score), 1)
 
 
 def _signature_finding(
@@ -1355,7 +1367,7 @@ def _result_summary(
         "fingerprint": {"zh": "模型指纹", "en": "model fingerprint"},
     }
 
-    component_scores = _summary_component_scores(parts)
+    component_scores = _summary_component_scores(parts, algorithm, errors)
     component = min(component_scores, key=component_scores.get) if component_scores else "audit"
     reason = component_names.get(component, {}).get(language, component)
 
@@ -1383,7 +1395,11 @@ def _summary_score_text(score: float) -> str:
     return f"{value}/100"
 
 
-def _summary_component_scores(parts: dict[str, dict]) -> dict[str, float]:
+def _summary_component_scores(
+    parts: dict[str, dict],
+    algorithm: str | None = None,
+    errors: dict[str, str] | None = None,
+) -> dict[str, float]:
     scores = {}
     audit = parts.get("audit")
     if audit:
@@ -1394,6 +1410,13 @@ def _summary_component_scores(parts: dict[str, dict]) -> dict[str, float]:
     fingerprint = parts.get("fingerprint")
     if fingerprint:
         scores["fingerprint"] = _fingerprint_score(fingerprint)
+    elif algorithm == "full":
+        scores["fingerprint"] = FINGERPRINT_INCOMPLETE_SCORE
+    if algorithm == "full" and errors and "fingerprint" in errors:
+        scores["fingerprint"] = min(
+            scores.get("fingerprint", 100.0),
+            FINGERPRINT_INCOMPLETE_SCORE,
+        )
     return scores
 
 
@@ -1410,7 +1433,7 @@ def _summary_prompt(
             _result_score(algorithm, parts, errors),
         ),
         "overall_verdict": _overall_verdict(algorithm, parts, errors),
-        "component_scores": _summary_component_scores(parts),
+        "component_scores": _summary_component_scores(parts, algorithm, errors),
         "failed_checks": [
             finding["title"]
             for finding in detail["findings"]
