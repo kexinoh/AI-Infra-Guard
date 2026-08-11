@@ -1,6 +1,6 @@
 # API Checker 集成说明
 
-API Checker 的 Python 运行时合并在 Agent 镜像和容器中，由容器内监督器与 Go Agent
+API Checker 的 Python 运行时合并在 Agent 镜像和容器中，由容器入口脚本与 Go Agent
 共同运行；现有 Gin WebServer 继续提供同源入口：
 
 ```text
@@ -108,7 +108,7 @@ docker compose up -d --build
 
 Agent 容器先启动 Checker；Checker 健康后 WebServer 才启动。Go Agent 在容器内持续
 尝试连接 WebServer，因此不会形成 Compose 循环依赖。Checker 是容器关键进程，退出时
-容器整体重启；Go Agent 进程退出时由监督器单独拉起，不影响 Checker。Compose 仅向
+容器整体重启；Go Agent 进程退出时由入口脚本单独拉起，不影响 Checker。Compose 仅向
 宿主暴露 AIG 的 `8088`，Agent 容器的 `8000` 只在内部网络开放。
 `api-checker-data` 卷挂载到 Agent 容器的 `/api-checker-data`，保存标定基准和运行数据；
 升级已有部署时入口脚本会修正旧卷权限，然后以非 root `agent` 用户运行两个业务进程。
@@ -128,7 +128,6 @@ Agent 容器先启动 Checker；Checker 健康后 WebServer 才启动。Go Agent
 | `AIG_API_CHECKER_ALLOW_HTTP` | `false` | 允许向可信目标用明文 HTTP 发送 Key |
 | `AIG_API_CHECKER_ALLOW_PRIVATE_TARGETS` | `false` | 允许环回、私网或链路本地目标 |
 | `AIG_API_CHECKER_CORS_ORIGINS` | 空 | 逗号分隔的额外跨域来源；默认仅同源 |
-| `AIG_AGENT_RESTART_DELAY_SECONDS` | `2` | 合并容器内 Go Agent 连接失败后的重试间隔 |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | Python 服务监听地址 |
 
 外部基准不存在时会读取内置的 28 个只读种子基准；首次标定时采用原子写入，在数据
