@@ -17,13 +17,16 @@ from pathlib import Path
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
-PORT = 18080
+PORT = int(os.environ.get("AIG_API_CHECKER_SMOKE_PORT", "18080"))
 BASE_URL = f"http://127.0.0.1:{PORT}"
 
 
 def fetch(path: str) -> tuple[int, str, bytes]:
-    with urllib.request.urlopen(BASE_URL + path, timeout=5) as response:
-        return response.status, response.headers.get_content_type(), response.read()
+    try:
+        with urllib.request.urlopen(BASE_URL + path, timeout=5) as response:
+            return response.status, response.headers.get_content_type(), response.read()
+    except urllib.error.HTTPError as response:
+        return response.code, response.headers.get_content_type(), response.read()
 
 
 def post_json(path: str, payload: dict) -> tuple[int, str, bytes]:
@@ -73,10 +76,6 @@ def main() -> int:
         checks = {
             "/healthz": {"application/json"},
             "/api/v1/relay/models": {"application/json"},
-            "/ui": {"text/html"},
-            # Python's MIME database and Starlette versions legitimately use
-            # either registered JavaScript media type.
-            "/static/app.js": {"application/javascript", "text/javascript"},
             "/docs": {"text/html"},
             "/openapi.json": {"application/json"},
         }
@@ -88,26 +87,23 @@ def main() -> int:
                 )
             print(path, status, content_type, len(body))
 
+        for path in ("/", "/ui", "/static/app.js"):
+            status, content_type, body = fetch(path)
+            if status != 404 or content_type != "application/json":
+                raise AssertionError(
+                    f"{path}: status={status}, type={content_type}, body={body!r}",
+                )
+            print(path, status, content_type, len(body))
+
         _, _, body = fetch("/api/v1/relay/models")
         payload = json.loads(body)
-        if payload["data"]["total"] != 28:
+        if payload["data"]["total"] != 29:
             raise AssertionError(f"unexpected model total: {payload['data']['total']}")
         print("models", payload["data"]["total"])
 
         _, _, docs_body = fetch("/docs")
         if b"/api-checker/openapi.json" not in docs_body:
             raise AssertionError("Swagger UI did not honor AIG_API_CHECKER_ROOT_PATH")
-
-        _, _, app_js = fetch("/static/app.js")
-        if (
-            b'fetch("/api/v1/app/models"' not in app_js
-            or b"/api/v1/api-checker/configured-models" in app_js
-            or b"/api/v1/api-checker/configured-check/stream" in app_js
-            or b"use_configured_model: true" not in app_js
-            or b"use_configured_model: false" not in app_js
-            or b"model_id: configuredModelId" not in app_js
-        ):
-            raise AssertionError("configured model picker did not reuse the unified APIs")
 
         status, content_type, body = post_json(
             "/api/v1/relay/check/stream",

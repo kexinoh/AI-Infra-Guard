@@ -373,6 +373,19 @@ class SignatureTests(unittest.TestCase):
 
 
 class RelayAuditTests(unittest.TestCase):
+    def test_risk_verdict_uses_40_and_70_boundaries(self):
+        cases = {
+            0: "LOW",
+            39: "LOW",
+            40: "MEDIUM",
+            69: "MEDIUM",
+            70: "HIGH",
+            100: "HIGH",
+        }
+        for score, expected in cases.items():
+            with self.subTest(score=score):
+                self.assertEqual(expected, relay_audit.risk_verdict(score))
+
     def test_model_candidates_strip_provider_prefix(self):
         cases = {
             "anthropic/claude-sonnet-5": [

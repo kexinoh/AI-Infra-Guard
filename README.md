@@ -167,9 +167,11 @@ aig-skill-scan --repo /path/to/your/skill \
 
 ### Model and API Relay Checker
 
-Docker deployment exposes the checker UI at
-`http://127.0.0.1:8088/api-checker/`. To run the checker and unified CLI from
-source:
+The checker frontend is deployed separately. Docker deployment keeps the
+checker APIs available at `GET /api/v1/relay/models` and
+`POST /api/v1/relay/check/stream`; API documentation is available at
+`http://127.0.0.1:8088/api-checker/docs`. To run the checker and unified CLI
+from source:
 
 ```bash
 python3 -m venv services/api_checker/.venv
@@ -182,7 +184,7 @@ export AIG_API_CHECKER_PYTHON="$PWD/services/api_checker/.venv/bin/python"
 ```
 
 See the [API Checker integration guide](docs/api-checker-integration.md) for
-the sidecar architecture, HTTP API, configuration, and security boundaries.
+the Agent-embedded runtime architecture, HTTP API, configuration, and security boundaries.
 
 ### 🌟 Try the Online Pro Version
 Experience the Pro version with advanced features and improved performance. The Pro version requires an [invitation code](https://wj.qq.com/s2/25099467/25vn/) and is prioritized for contributors who have submitted issues, pull requests, or discussions, or actively help grow the community. Visit: [https://aigsec.ai/](https://aigsec.ai/).

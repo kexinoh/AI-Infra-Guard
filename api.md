@@ -48,10 +48,9 @@ paths:
 
 - `GET /api/v1/relay/models`
 - `POST /api/v1/relay/check/stream`
-- `/api-checker/` for the web interface
 - `/api-checker/docs` for the checker's OpenAPI documentation
 
-The checker runs as an independent Python sidecar. Its request and response
+The checker runs inside the Agent container. Its request and response
 contract, SSE progress format, configuration, and security boundaries are
 documented in [docs/api-checker-integration.md](docs/api-checker-integration.md)
 and [services/api_checker/docs/API.md](services/api_checker/docs/API.md).

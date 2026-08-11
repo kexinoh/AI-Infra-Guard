@@ -183,7 +183,7 @@ data.error	integer	失败请求数；风险命中但请求成功时不计为错�
 完整结构
 
 event: result
-data: {"status":0,"message":"success","data":{"algorithm":"quick","score":100.0,"overall_verdict":"pass","summary":"综合评分100/100，各项检测均表现正常","detail":{"findings":[{"probe":"models","severity":"Passed","title":"模型列表检查"}],"best_model":"","fingerprint":{},"test_info":{"latency_ms":750,"tokens_per_second":20.0,"input_tokens":150,"output_tokens":30,"cache_read_tokens":65}}}}
+data: {"status":0,"message":"success","data":{"algorithm":"quick","score":100.0,"overall_verdict":"pass","risk_level":"none","summary":"综合评分100/100，各项检测均表现正常","detail":{"findings":[{"probe":"models","severity":"Passed","title":"模型列表检查"}],"best_model":"","fingerprint":{},"test_info":{"latency_ms":750,"tokens_per_second":20.0,"input_tokens":150,"output_tokens":30,"cache_read_tokens":65}}}}
 
 
 格式化后的 JSON：
@@ -195,6 +195,7 @@ data: {"status":0,"message":"success","data":{"algorithm":"quick","score":100.0,
     "algorithm": "quick",
     "score": 100.0,
     "overall_verdict": "pass",
+    "risk_level": "none",
     "summary": "综合评分100/100，各项检测均表现正常",
     "detail": {
       "findings": [
@@ -222,6 +223,7 @@ result.data 字段
 algorithm	string	quick 或 full
 score	number	已完成组件中最低的可信分；模型指纹缺失或执行失败时为 50，其他组件执行失败时为 0
 overall_verdict	string	综合判定：pass、risk 或 inconclusive
+risk_level	string	风险标签：risk 时安全分低于 30 为 high、30～69.9 为 medium、70 及以上为 low；pass 为 none；inconclusive 为 unknown
 summary	string	由被测大模型根据评分和检查结果生成的简短结论；中文约 20～30 字，包含评分及主要降分原因
 detail.findings	array	所有适用且证据充分的探针、专项风险条件、Claude 签名及 full 模型指纹状态
 detail.best_model	string	full 的最匹配模型；无结果时为空字符串
@@ -278,7 +280,7 @@ Claude 19 项、full + Claude 20 项。实际数量可能更少。例如身份�
 `min((1 - posterior) × 100, 50)` 计算，最终设置 70 分下限，即最多扣 30 分。存在多个组件时取最低分，避免出现高置信识别出替身却仍
 得到 100 分的矛盾结果。若最高后验候选就是声明模型且后验不低于 85%，仅 G²
 绝对分布漂移不会再被当作模型替换失败。Signature 和模型指纹项使用中性标题，具体状态统一由
-`severity` 表达；综合评分和判定信息仍在顶层 `score`、`overall_verdict`、`summary`
+`severity` 表达；综合评分和判定信息仍在顶层 `score`、`overall_verdict`、`risk_level`、`summary`
 以及 `detail.fingerprint` 中返回。
 
 返回字段遵循强制一致性约束：除 Claude 签名和模型指纹外，任一已确认风险组件的分数最高为
@@ -311,7 +313,7 @@ Claude 19 项、full + Claude 20 项。实际数量可能更少。例如身份�
 }
 ```
 
-字段名以及 `overall_verdict` 的 `pass`、`risk`、`inconclusive` 等机器枚举不随语言变化。
+字段名以及 `overall_verdict`、`risk_level` 的机器枚举不随语言变化。
 
 4.4 done：正常结束
 成功发送 result 后发送一次，表示服务端不会再发送业务事件。
@@ -366,13 +368,13 @@ API Key 原文不会写入日志，仅记录：
 finding 数量和 full 模式最匹配模型。例如：
 
 ```json
-{"timestamp":"2026-08-04T08:00:00.000+00:00","level":"INFO","service":"aig-api-checker","event":"detection_completed","request_id":"71b19f8bcb924dda","algorithm":"full","model":"glm-5","api_key_suffix":"xyz","api_key_sha256":"<64位SHA-256>","base_url":"https://relay.example.com/v1","duration_ms":12345,"score":100.0,"overall_verdict":"pass","findings_count":19,"best_model":"GLM-5.2"}
+{"timestamp":"2026-08-04T08:00:00.000+00:00","level":"INFO","service":"aig-api-checker","event":"detection_completed","request_id":"71b19f8bcb924dda","algorithm":"full","model":"glm-5","api_key_suffix":"xyz","api_key_sha256":"<64位SHA-256>","base_url":"https://relay.example.com/v1","duration_ms":12345,"score":100.0,"overall_verdict":"pass","risk_level":"none","findings_count":19,"best_model":"GLM-5.2"}
 ```
 
 查看当前容器日志：
 
 ```bash
-docker logs -f aig-api-checker-pr511
+docker logs -f ai-infra-guard-agent
 ```
 
 6. Python SSE 客户端示例

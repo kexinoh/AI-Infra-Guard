@@ -32,14 +32,24 @@ func TestStaticFallbackReturnsNotFoundForUnknownAPI(t *testing.T) {
 	router := gin.New()
 	router.NoRoute(serveStaticFallback)
 
-	request := httptest.NewRequest(
-		http.MethodPost,
+	for _, path := range []string{
 		"/api/v1/api-checker/configured-check/stream",
-		nil,
-	)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
+		"/api-checker",
+		"/api-checker/",
+		"/api-checker/ui",
+		"/api-checker/static/app.js",
+	} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
 
-	require.Equal(t, http.StatusNotFound, response.Code)
-	require.JSONEq(t, `{"detail":"API endpoint not found"}`, response.Body.String())
+			require.Equal(t, http.StatusNotFound, response.Code)
+			require.JSONEq(
+				t,
+				`{"detail":"API endpoint not found"}`,
+				response.Body.String(),
+			)
+		})
+	}
 }

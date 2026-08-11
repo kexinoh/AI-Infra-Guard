@@ -148,13 +148,17 @@ python main.py detect
 
 ```bash
 python server.py
-# 独立运行时打开 http://127.0.0.1:8000/ui
-# 通过 AIG 统一接入时打开 http://127.0.0.1:8088/api-checker/
+# 独立运行时的 OpenAPI 文档：http://127.0.0.1:8000/docs
+# 通过 AIG 统一接入时的 OpenAPI 文档：http://127.0.0.1:8088/api-checker/docs
 curl http://127.0.0.1:8088/api/v1/relay/models
 curl -N -X POST http://127.0.0.1:8088/api/v1/relay/check/stream \
   -H "Content-Type: application/json" \
   -d '{"algorithm":"quick","base_url":"https://relay.example.com/v1","api_key":"sk-...","model":"gpt-4o","language":"en"}'
 ```
+
+本服务不内置检测前端；独立部署的前端直接调用上述 API。跨域直连 Checker 时通过
+`AIG_API_CHECKER_CORS_ORIGINS` 配置允许的前端来源；经 AIG 或其他网关访问时在对应
+网关配置跨域策略。
 
 可通过 `/api/v1/relay/models` 查询 quick/full 检测支持的 29 个参考指纹模型。检测入口为
 `/api/v1/relay/check/stream`，详见
@@ -162,7 +166,9 @@ curl -N -X POST http://127.0.0.1:8088/api/v1/relay/check/stream \
 [`docs/FAQ.md`](docs/FAQ.md)。
 `language` 可选 `zh` 或 `en`，省略时默认中文；该参数控制结果中的 `summary`
 和 `detail.findings[].title`。`detail.findings[].severity` 统一使用英文二值
-状态；字段名以及 `overall_verdict` 的机器可读枚举保持不变。
+状态；字段名以及 `overall_verdict`、`risk_level` 的机器可读枚举保持不变。
+`risk_level` 在确认风险时按顶层安全分标记为 `high`（低于 30）、`medium`
+（30～69.9）或 `low`（70 及以上）；检测通过时为 `none`，证据不足时为 `unknown`。
 `summary` 由当前被测大模型根据评分、组件评分和未通过检查项生成：中文约
 20～30 字，英文保持同等简洁；低于 100 分时说明一个主要降分原因。该步骤会新增
 一次上游请求；若生成失败则自动使用同语言的本地兜底文本，不影响检测评分和判定。
@@ -175,7 +181,7 @@ curl -N -X POST http://127.0.0.1:8088/api/v1/relay/check/stream \
 ## 日志
 
 HTTP 检测主流程输出单行 JSON 结构化日志到 stdout，Docker 可通过
-`docker logs -f aig-api-checker-pr511` 查看。日志覆盖任务接收、开始、组件错误、
+`docker logs -f ai-infra-guard-agent` 查看合并容器日志。日志覆盖任务接收、开始、组件错误、
 完成、取消、拒绝和客户端断开，并记录请求 ID、模式、模型、目标地址、耗时、分数、
 判定和 finding 数量。默认级别为 `INFO`，可通过
 `AIG_API_CHECKER_LOG_LEVEL=DEBUG|INFO|WARNING|ERROR` 调整；`DEBUG` 额外记录进度。
@@ -203,7 +209,7 @@ HTTP 服务默认只允许公网 HTTPS 目标。可信内网或本机测试可�
 services/api_checker/
 ├── main.py              # CLI 入口
 ├── server.py            # HTTP SSE 服务入口
-├── Dockerfile           # 独立 Python sidecar
+├── Dockerfile           # 本地独立运行使用；Compose 生产部署已合并到 Agent 镜像
 ├── algorithms/
 │   ├── common.py        # 公共 API 客户端、统计与基准存储
 │   ├── fingerprint.py   # 随机数指纹

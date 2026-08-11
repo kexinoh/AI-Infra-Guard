@@ -16,7 +16,7 @@
 // Tencent Zhuque Lab (https://github.com/Tencent/AI-Infra-Guard) in its
 // documentation or user interface, as detailed in the NOTICE file.
 
-// Package apichecker exposes the API checker sidecar through the AIG HTTP
+// Package apichecker exposes the API checker service through the AIG HTTP
 // server. Detection bodies are bounded and kept only in memory when selecting
 // credentials already stored in AIG.
 package apichecker
@@ -38,10 +38,18 @@ import (
 const (
 	// RelayPrefix is forwarded to the checker without changing the path.
 	RelayPrefix = "/api/v1/relay"
-	// UIPrefix is removed before requests are forwarded to the checker.
-	UIPrefix             = "/api-checker"
+	// ServicePrefix is removed for the API checker's documentation and health
+	// endpoints. The checker frontend is deployed separately.
+	ServicePrefix        = "/api-checker"
 	maxCheckRequestBytes = 1 << 20
 )
+
+var servicePaths = []string{
+	"/docs",
+	"/redoc",
+	"/openapi.json",
+	"/healthz",
+}
 
 var forwardedRequestHeaders = []string{
 	"Accept",
@@ -62,7 +70,7 @@ type Handler struct {
 }
 
 // New creates an API checker proxy. Upstream must be an absolute HTTP(S) URL,
-// for example http://api-checker:8000.
+// for example http://agent:8000.
 func New(upstream string) (*Handler, error) {
 	return NewWithModelStore(upstream, nil)
 }
@@ -87,7 +95,7 @@ func NewWithModelStore(upstream string, modelStore *database.ModelStore) (*Handl
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	director := proxy.Director
 	proxy.Director = func(req *http.Request) {
-		rewriteUIPath(req.URL)
+		rewriteServicePath(req.URL)
 		req.Header = checkerRequestHeaders(req.Header)
 		director(req)
 		req.Host = target.Host
@@ -103,14 +111,6 @@ func NewWithModelStore(upstream string, modelStore *database.ModelStore) (*Handl
 
 // Serve forwards a Gin request to the API checker.
 func (h *Handler) Serve(c *gin.Context) {
-	if c.Request.URL.Path == UIPrefix {
-		location := UIPrefix + "/"
-		if c.Request.URL.RawQuery != "" {
-			location += "?" + c.Request.URL.RawQuery
-		}
-		c.Redirect(http.StatusPermanentRedirect, location)
-		return
-	}
 	if c.Request.Method == http.MethodPost &&
 		c.Request.URL.Path == RelayPrefix+"/check/stream" {
 		h.serveCheck(c)
@@ -119,11 +119,13 @@ func (h *Handler) Serve(c *gin.Context) {
 	h.proxy.ServeHTTP(c.Writer, c.Request)
 }
 
-// Register mounts the relay API and prefixed checker UI routes.
+// Register mounts the relay API plus the checker's documentation and health
+// endpoints. The checker frontend is deployed separately.
 func (h *Handler) Register(router gin.IRouter) {
 	router.Any(RelayPrefix+"/*path", h.Serve)
-	router.Any(UIPrefix, h.Serve)
-	router.Any(UIPrefix+"/*path", h.Serve)
+	for _, path := range servicePaths {
+		router.Any(ServicePrefix+path, h.Serve)
+	}
 }
 
 // EnableConfiguredModelResolution enables server-side credential resolution
@@ -236,22 +238,20 @@ func (h *Handler) resolveVisibleModel(modelID, username string) (*database.Model
 	return nil, fmt.Errorf("model not found")
 }
 
-func rewriteUIPath(requestURL *url.URL) {
-	requestURL.Path = stripUIPrefix(requestURL.Path)
+func rewriteServicePath(requestURL *url.URL) {
+	requestURL.Path = stripServicePrefix(requestURL.Path)
 	if requestURL.RawPath != "" {
-		requestURL.RawPath = stripUIPrefix(requestURL.RawPath)
+		requestURL.RawPath = stripServicePrefix(requestURL.RawPath)
 	}
 }
 
-func stripUIPrefix(path string) string {
-	switch {
-	case path == UIPrefix, path == UIPrefix+"/":
-		return "/"
-	case strings.HasPrefix(path, UIPrefix+"/"):
-		return strings.TrimPrefix(path, UIPrefix)
-	default:
-		return path
+func stripServicePrefix(path string) string {
+	for _, servicePath := range servicePaths {
+		if path == ServicePrefix+servicePath {
+			return servicePath
+		}
 	}
+	return path
 }
 
 func checkerRequestHeaders(source http.Header) http.Header {

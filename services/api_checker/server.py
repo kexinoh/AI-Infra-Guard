@@ -53,8 +53,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 if __package__:
@@ -180,12 +179,12 @@ DEFAULT_LANGUAGE = "zh"
 VERDICT_TEXT = {
     "zh": {
         "native": "原生透传", "suspect": "存在可疑", "proxy": "疑似替身",
-        "LOW": "未发现明显风险", "MEDIUM": "存在可疑", "HIGH": "高风险",
+        "LOW": "低风险", "MEDIUM": "中风险", "HIGH": "高风险",
     },
     "en": {
         "native": "Native passthrough", "suspect": "Suspicious",
-        "proxy": "Suspected substitute", "LOW": "No obvious risk detected",
-        "MEDIUM": "Suspicious behavior detected", "HIGH": "High risk",
+        "proxy": "Suspected substitute", "LOW": "Low risk",
+        "MEDIUM": "Medium risk", "HIGH": "High risk",
     },
 }
 FINDING_FAILED_STATUS = "Failed"
@@ -1352,6 +1351,20 @@ def _overall_verdict(algorithm: str, parts: dict[str, dict], errors: dict[str, s
     return "pass"
 
 
+def _risk_level(score: float, overall_verdict: str) -> str:
+    """Map the aggregate safety score to a stable, machine-readable label."""
+    if overall_verdict == "pass":
+        return "none"
+    if overall_verdict != "risk" or not _is_number(score):
+        return "unknown"
+    normalized = min(100.0, max(0.0, float(score)))
+    if normalized < 30.0:
+        return "high"
+    if normalized < 70.0:
+        return "medium"
+    return "low"
+
+
 def _result_summary(
     algorithm: str,
     parts: dict[str, dict],
@@ -1720,6 +1733,7 @@ def _run_detect(
             "algorithm": "quick",
             "score": score,
             "overall_verdict": overall_verdict,
+            "risk_level": _risk_level(score, overall_verdict),
             "summary": summary,
             "detail": _result_detail("quick", parts, req.language),
         }
@@ -1806,6 +1820,7 @@ def _run_detect(
         "algorithm": "full",
         "score": score,
         "overall_verdict": overall_verdict,
+        "risk_level": _risk_level(score, overall_verdict),
         "summary": summary,
         "detail": _result_detail("full", parts, req.language),
     }
@@ -1860,6 +1875,7 @@ async def _stream_detect(
                 duration_ms=round((time.monotonic() - started) * 1000),
                 score=result.get("score"),
                 overall_verdict=result.get("overall_verdict"),
+                risk_level=result.get("risk_level"),
                 findings_count=len(result.get("detail", {}).get("findings", [])),
                 best_model=result.get("detail", {}).get("best_model") or None,
             )
@@ -1975,16 +1991,6 @@ if CORS_ORIGINS:
         allow_headers=["Content-Type", "X-Request-ID"],
         expose_headers=["X-Request-ID"],
     )
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.get("/", include_in_schema=False)
-@app.get("/ui", include_in_schema=False)
-def web_index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-
-
 @app.get("/docs", include_in_schema=False)
 def swagger_docs():
     return get_swagger_ui_html(

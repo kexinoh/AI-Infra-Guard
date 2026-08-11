@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -465,7 +466,7 @@ func TestRelaySSEFlushesImmediately(t *testing.T) {
 	require.Contains(t, string(rest), "event: done")
 }
 
-func TestUIAndStaticPathsStripPrefix(t *testing.T) {
+func TestServicePathsStripPrefix(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
@@ -483,25 +484,28 @@ func TestUIAndStaticPathsStripPrefix(t *testing.T) {
 		request   string
 		wantPath  string
 		wantQuery string
-		finalPath string
 	}{
 		{
-			name:     "UI root",
-			request:  "/api-checker/",
-			wantPath: "/",
+			name:     "health",
+			request:  "/api-checker/healthz",
+			wantPath: "/healthz",
 		},
 		{
-			name:      "UI root without trailing slash",
-			request:   "/api-checker?from=test",
-			wantPath:  "/",
+			name:      "OpenAPI document with query",
+			request:   "/api-checker/openapi.json?format=json",
+			wantPath:  "/openapi.json",
+			wantQuery: "format=json",
+		},
+		{
+			name:      "Swagger docs",
+			request:   "/api-checker/docs?from=test",
+			wantPath:  "/docs",
 			wantQuery: "from=test",
-			finalPath: "/api-checker/",
 		},
 		{
-			name:      "static asset",
-			request:   "/api-checker/static/app.js?v=17",
-			wantPath:  "/static/app.js",
-			wantQuery: "v=17",
+			name:     "ReDoc",
+			request:  "/api-checker/redoc",
+			wantPath: "/redoc",
 		},
 	}
 
@@ -515,35 +519,34 @@ func TestUIAndStaticPathsStripPrefix(t *testing.T) {
 			require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
 			require.Equal(t, tt.wantPath, got["path"])
 			require.Equal(t, tt.wantQuery, got["query"])
-			if tt.finalPath != "" {
-				require.Equal(t, tt.finalPath, resp.Request.URL.Path)
-			}
 		})
 	}
 }
 
-func TestUIRootRedirectsBeforeProxying(t *testing.T) {
-	upstreamCalled := false
+func TestFrontendPathsAreNotRegistered(t *testing.T) {
+	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		upstreamCalled = true
+		upstreamCalls.Add(1)
 	}))
 	defer upstream.Close()
 
 	proxy := newProxyServer(t, upstream.URL)
 	defer proxy.Close()
 
-	client := &http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	for _, path := range []string{
+		"/api-checker",
+		"/api-checker/",
+		"/api-checker/ui",
+		"/api-checker/static/app.js",
+	} {
+		t.Run(path, func(t *testing.T) {
+			resp, err := http.Get(proxy.URL + path)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		})
 	}
-	resp, err := client.Get(proxy.URL + "/api-checker?from=test")
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	require.Equal(t, http.StatusPermanentRedirect, resp.StatusCode)
-	require.Equal(t, "/api-checker/?from=test", resp.Header.Get("Location"))
-	require.False(t, upstreamCalled)
+	require.Zero(t, upstreamCalls.Load())
 }
 
 func TestProxyDoesNotForwardAIGSessionHeaders(t *testing.T) {

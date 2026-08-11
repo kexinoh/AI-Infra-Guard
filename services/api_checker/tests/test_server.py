@@ -703,6 +703,24 @@ class ServerContractTests(unittest.TestCase):
         )
         self.assertEqual(0.0, server._result_score("quick", parts, errors))
 
+    def test_risk_level_uses_safety_score_boundaries(self):
+        cases = (
+            (0, "risk", "high"),
+            (29.9, "risk", "high"),
+            (30, "risk", "medium"),
+            (69.9, "risk", "medium"),
+            (70, "risk", "low"),
+            (99.9, "risk", "low"),
+            (91, "pass", "none"),
+            (0, "inconclusive", "unknown"),
+        )
+        for score, verdict, expected in cases:
+            with self.subTest(score=score, verdict=verdict):
+                self.assertEqual(
+                    expected,
+                    server._risk_level(score, verdict),
+                )
+
     def test_incomplete_fingerprint_scores_50_without_exceptions(self):
         malformed_audit = {
             "verdict": "LOW",
@@ -912,6 +930,8 @@ class ServerContractTests(unittest.TestCase):
             "综合评分50/100，检测发现异常，主要涉及黑盒审计",
             chinese["summary"],
         )
+        self.assertEqual("medium", chinese["risk_level"])
+        self.assertEqual("medium", english["risk_level"])
         self.assertIn(
             {
                 "probe": "liveness",
@@ -970,6 +990,7 @@ class ServerContractTests(unittest.TestCase):
             fingerprint_call.call_args.args[0].model,
         )
         self.assertEqual("pass", result["overall_verdict"])
+        self.assertEqual("none", result["risk_level"])
         self.assertEqual(
             "Overall score 91/100; checks passed with lower confidence in model fingerprint.",
             result["summary"],
@@ -1049,6 +1070,7 @@ class ServerContractTests(unittest.TestCase):
 
         self.assertEqual(80.0, result["score"])
         self.assertEqual("risk", result["overall_verdict"])
+        self.assertEqual("low", result["risk_level"])
         self.assertEqual(
             "综合评分80/100，检测发现异常，主要涉及签名验证",
             result["summary"],
@@ -1089,6 +1111,7 @@ class ServerContractTests(unittest.TestCase):
             )
 
         self.assertEqual("inconclusive", result["overall_verdict"])
+        self.assertEqual("unknown", result["risk_level"])
         self.assertEqual(
             [("signature", "signature unavailable")],
             component_errors,

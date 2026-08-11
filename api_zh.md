@@ -47,10 +47,9 @@ API Checker 通过 A.I.G WebServer 提供以下同源入口：
 
 - `GET /api/v1/relay/models`
 - `POST /api/v1/relay/check/stream`
-- `/api-checker/`：检测页面
 - `/api-checker/docs`：Checker OpenAPI 文档
 
-Checker 作为独立 Python sidecar 运行。请求响应契约、SSE 进度格式、配置和安全边界
+Checker 随 Agent 容器运行。请求响应契约、SSE 进度格式、配置和安全边界
 详见 [docs/api-checker-integration.md](docs/api-checker-integration.md) 与
 [services/api_checker/docs/API.md](services/api_checker/docs/API.md)。
 

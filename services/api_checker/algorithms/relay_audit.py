@@ -18,6 +18,13 @@ from typing import Any, Dict, List, Optional, Tuple
 CONTENT_MAX_TOKENS = 512
 HTTP_TOTAL_TIMEOUT_SECONDS = 60
 AUDIT_TOTAL_TIMEOUT_SECONDS = 180
+RISK_MEDIUM_THRESHOLD = 40
+RISK_HIGH_THRESHOLD = 70
+RISK_LEVEL_TEXT = {
+    "LOW": "低风险",
+    "MEDIUM": "中风险",
+    "HIGH": "高风险",
+}
 
 FAMILY_ALIASES = {
     "openai": ["openai", "gpt", "o1", "o3", "o4", "chatgpt"],
@@ -113,6 +120,15 @@ class ProbeResult:
     name: str; ok: bool; latency_ms: Optional[int]
     data: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
+
+
+def risk_verdict(score):
+    """按统一的 40/70 风险分区返回机器可读等级。"""
+    if score >= RISK_HIGH_THRESHOLD:
+        return "HIGH"
+    if score >= RISK_MEDIUM_THRESHOLD:
+        return "MEDIUM"
+    return "LOW"
 
 
 # ---- 工具 ----
@@ -658,11 +674,10 @@ def run_relay_audit(base_url, api_key, model, profile="full", cancel_event=None,
             on_progress(len(results), len(probe_names))
     findings = build_findings(results, active_model)
     score = min(100, sum(f.score for f in findings))
-    v = "HIGH" if score >= 70 else ("MEDIUM" if score >= 30 else "LOW")
-    v_map = {"LOW": "未发现明显风险", "MEDIUM": "存在可疑", "HIGH": "高风险"}
+    v = risk_verdict(score)
     return {
         "score": score, "verdict": v, "findings": findings,
         "probe_results": results,
         "resolved_model": active_model,
-        "summary": f"{v_map[v]} (分数: {score}/100, 发现: {len(findings)} 项)",
+        "summary": f"{RISK_LEVEL_TEXT[v]} (分数: {score}/100, 发现: {len(findings)} 项)",
     }

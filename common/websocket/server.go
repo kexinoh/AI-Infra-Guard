@@ -347,13 +347,16 @@ func RunWebServer(options *version.Options) {
 }
 
 func serveStaticFallback(c *gin.Context) {
-	if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/api/") ||
+		path == apichecker.ServicePrefix ||
+		strings.HasPrefix(path, apichecker.ServicePrefix+"/") {
 		c.JSON(http.StatusNotFound, gin.H{"detail": "API endpoint not found"})
 		return
 	}
 
-	assetPath := "static" + c.Request.URL.Path
-	if c.Request.URL.Path == "/" {
+	assetPath := "static" + path
+	if path == "/" {
 		assetPath = "static/index.html"
 	}
 
