@@ -34,6 +34,20 @@ def fully_evaluable_probe_results():
             },
         },
         {
+            "name": "glitch_fingerprint",
+            "ok": True,
+            "data": {
+                "status": 200,
+                "analyzable": True,
+                "requested_families": ["openai"],
+                "best_family": "openai",
+                "candidate_families": [{
+                    "family": "openai",
+                    "consistent": True,
+                }],
+            },
+        },
+        {
             "name": "token_delta",
             "ok": True,
             "data": {"status": 200, "delta": 0},
@@ -891,9 +905,9 @@ class ServerContractTests(unittest.TestCase):
 
         self.assertEqual(expected, progress)
         self.assertEqual({
-            "completed": 15,
-            "total": 15,
-            "success": 15,
+            "completed": 16,
+            "total": 16,
+            "success": 16,
             "error": 0,
         }, progress[-1])
 
@@ -1194,7 +1208,7 @@ class ServerContractTests(unittest.TestCase):
             chinese["findings"],
         )
 
-    def test_all_18_audit_checks_return_passed_or_failed(self):
+    def test_all_20_audit_checks_return_passed_or_failed(self):
         probe_results = fully_evaluable_probe_results()
         safe_parts = {
             "audit": {
@@ -1207,7 +1221,7 @@ class ServerContractTests(unittest.TestCase):
 
         chinese = server._result_detail("full", safe_parts, "zh")["findings"]
         english = server._result_detail("full", safe_parts, "en")["findings"]
-        self.assertEqual(18, len(chinese))
+        self.assertEqual(20, len(chinese))
         self.assertTrue(all(item["severity"] == "Passed" for item in chinese))
         self.assertTrue(all("通过" not in item["title"] for item in chinese))
         self.assertTrue(all(item["severity"] == "Passed" for item in english))

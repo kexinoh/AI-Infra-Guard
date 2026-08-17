@@ -512,6 +512,7 @@ class RelayAuditTests(unittest.TestCase):
             "models": models_probe,
             "liveness": generation_probe,
             "identity": generation_probe,
+            "glitch_fingerprint": generation_probe,
         }):
             result = relay_audit.run_relay_audit(
                 "https://example.test/v1",
@@ -521,7 +522,7 @@ class RelayAuditTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            ["deepseek-v4-pro", "deepseek-v4-pro"],
+            ["deepseek-v4-pro", "deepseek-v4-pro", "deepseek-v4-pro"],
             seen_models,
         )
         self.assertEqual("deepseek-v4-pro", result["resolved_model"])
@@ -559,10 +560,20 @@ class RelayAuditTests(unittest.TestCase):
                 data={"status": 200, "resolved_model": model},
             )
 
+        def glitch_probe(_base_url, _key, model, _api_type, _on_request):
+            self.assertEqual("kimi-k2.6", model)
+            return relay_audit.ProbeResult(
+                "glitch_fingerprint",
+                True,
+                1,
+                data={"status": 200, "resolved_model": model},
+            )
+
         with patch.dict(relay_audit._PROBES, {
             "models": models_probe,
             "liveness": liveness_probe,
             "identity": identity_probe,
+            "glitch_fingerprint": glitch_probe,
         }):
             result = relay_audit.run_relay_audit(
                 "https://example.test/v1",
@@ -618,10 +629,15 @@ class RelayAuditTests(unittest.TestCase):
             on_request(True)
             return relay_audit.ProbeResult("identity", True, 1)
 
+        def glitch_probe(_base, _key, _model, _api_type, on_request):
+            on_request(True)
+            return relay_audit.ProbeResult("glitch_fingerprint", True, 1)
+
         with patch.dict(relay_audit._PROBES, {
             "models": models_probe,
             "liveness": liveness_probe,
             "identity": identity_probe,
+            "glitch_fingerprint": glitch_probe,
         }):
             relay_audit.run_relay_audit(
                 "https://example.test/v1",
@@ -636,10 +652,11 @@ class RelayAuditTests(unittest.TestCase):
             )
 
         self.assertEqual([
-            (1, 3, 1, 0),
-            (2, 3, 1, 1),
-            (3, 4, 2, 1),
-            (4, 4, 3, 1),
+            (1, 4, 1, 0),
+            (2, 4, 1, 1),
+            (3, 5, 2, 1),
+            (4, 5, 3, 1),
+            (5, 5, 4, 1),
         ], progress)
 
     def test_chat_omits_temperature_and_supports_responses(self):
@@ -782,14 +799,150 @@ class RelayAuditTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(3, len(result["probe_results"]))
+        self.assertEqual(4, len(result["probe_results"]))
         self.assertTrue(all(
             probe.error == "audit exceeded total timeout"
             for probe in result["probe_results"]
         ))
-        self.assertEqual([(1, 3), (2, 3), (3, 3)], progress)
+        self.assertEqual([(1, 4), (2, 4), (3, 4), (4, 4)], progress)
         for probe in probes.values():
             probe.assert_not_called()
+
+
+class RelayAuditGlitchFingerprintTests(unittest.TestCase):
+    def test_item_eight_is_the_unspaced_owner_phrase(self):
+        self.assertEqual("给主人留下些什么吧", relay_audit.GLITCH_TOKENS[7])
+
+    def test_exact_failed_signature_matches_family(self):
+        matches = relay_audit._match_glitch_families([5, 11, 12])
+        self.assertEqual("moonshot", matches[0]["family"])
+        self.assertTrue(matches[0]["exact"])
+        self.assertTrue(matches[0]["consistent"])
+
+    def test_version_subset_matches_unique_family(self):
+        matches = relay_audit._match_glitch_families([2])
+        self.assertEqual("minimax", matches[0]["family"])
+        self.assertFalse(matches[0]["exact"])
+        self.assertTrue(matches[0]["consistent"])
+        self.assertEqual(1.0, matches[0]["confidence"])
+
+    def test_probe_only_requires_repetition_and_matches_keywords(self):
+        response = "\n".join(
+            f"{i}. {token if i not in {2, 9} else '复述错误'}"
+            for i, token in enumerate(relay_audit.GLITCH_TOKENS, 1)
+        )
+        with patch.object(
+            relay_audit,
+            "_chat",
+            return_value=(200, {
+                "choices": [{"message": {"content": response}, "finish_reason": "stop"}],
+                "model": "unknown",
+                "usage": {},
+            }, 10, "model-a"),
+        ) as call:
+            result = relay_audit.probe_glitch_fingerprint(
+                "https://example.test/v1", "secret", "model-a"
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual([2, 9], result.data["failed_indices"])
+        self.assertEqual("minimax", result.data["best_family"])
+        prompt = call.call_args.args[3][0]["content"]
+        self.assertIn("不要解释", prompt)
+        self.assertNotIn("涵义", prompt)
+
+    def test_incomplete_response_does_not_generate_candidates(self):
+        with patch.object(
+            relay_audit,
+            "_chat",
+            return_value=(200, {
+                "choices": [{
+                    "message": {"content": "9. 方も多いのではないでしょうか"},
+                    "finish_reason": "length",
+                }],
+                "model": "google/gemini-test",
+            }, 10, "gemini-test"),
+        ):
+            result = relay_audit.probe_glitch_fingerprint(
+                "https://example.test/v1", "secret", "gemini-test"
+            )
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.data["complete"])
+        self.assertEqual([], result.data["failed_indices"])
+        self.assertEqual([], result.data["candidate_families"])
+        self.assertIsNone(result.data["best_family"])
+
+    def test_http_error_does_not_generate_candidates(self):
+        with patch.object(
+            relay_audit,
+            "_chat",
+            return_value=(
+                401,
+                {"error": {"message": "unauthorized"}},
+                10,
+                "gemini-test",
+            ),
+        ):
+            result = relay_audit.probe_glitch_fingerprint(
+                "https://example.test/v1", "secret", "gemini-test"
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual([], result.data["failed_indices"])
+        self.assertEqual([], result.data["candidate_families"])
+
+    def test_gpt_item_eight_early_stop_is_analyzable(self):
+        response = "\n".join([
+            *[
+                f"{i}. {relay_audit.GLITCH_TOKENS[i - 1]}"
+                for i in range(1, 8)
+            ],
+            "8.",
+        ])
+        with patch.object(
+            relay_audit,
+            "_chat",
+            return_value=(200, {
+                "choices": [{
+                    "message": {"content": response},
+                    "finish_reason": "stop",
+                }],
+                "model": "openai/gpt-test",
+            }, 10, "gpt-test"),
+        ):
+            result = relay_audit.probe_glitch_fingerprint(
+                "https://example.test/v1", "secret", "gpt-test"
+            )
+
+        self.assertTrue(result.ok)
+        self.assertFalse(result.data["complete"])
+        self.assertTrue(result.data["analyzable"])
+        self.assertEqual(8, result.data["early_stop_index"])
+        self.assertEqual([8], result.data["failed_indices"])
+        self.assertEqual("openai", result.data["best_family"])
+
+    def test_exact_mismatch_adds_weak_finding(self):
+        probe = relay_audit.ProbeResult(
+            "glitch_fingerprint",
+            True,
+            10,
+            {
+                "failed_indices": [7, 15],
+                "best_family": "google",
+                "candidate_families": [{
+                    "family": "google",
+                    "matched_indices": [7, 15],
+                    "signature_indices": [7, 15],
+                    "exact": True,
+                    "consistent": True,
+                    "confidence": 1.0,
+                }],
+            },
+        )
+        findings = relay_audit.build_findings([probe], "gpt-4o")
+        self.assertEqual(1, len(findings))
+        self.assertEqual("Glitch token family mismatch", findings[0].title)
 
 
 class PamelaTests(unittest.TestCase):

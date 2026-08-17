@@ -9,8 +9,8 @@ GET	/api/v1/relay/models	获取当前支持完整指纹识别的模型列表
 POST	/api/v1/relay/check/stream	API 中转检查 SSE 流式接口
 检测算法
 algorithm	检测内容
-quick	C：黑盒审计 7 探针；Claude 模型自动叠加 B
-full	A：随机数指纹 + C：黑盒审计 7 探针；Claude 模型自动叠加 B
+quick	C：黑盒审计 8 探针；Claude 模型自动叠加 B
+full	A：随机数指纹 + C：黑盒审计 8 探针；Claude 模型自动叠加 B
 模型 ID 包含 sonnet、opus、haiku 或 fable 时，不区分大小写地识别为
  Claude，并自动叠加算法 B（Thinking Signature 验证）。
 2. 获取可检测模型
@@ -151,9 +151,9 @@ data.algorithm	string	本次检测模式：quick 或 full
 4.2 progress：检测进度
 full 模式在随机数指纹采样阶段按样本持续发送，包含已完成、总数、成功数和
 错误数。quick 模式使用相同的四字段结构，但统计的是真实上游 HTTP 请求：普通
-quick 正常为 8 次（7 次黑盒审计 + 1 次大模型总结）；Claude quick 正常为 15 次
-（7 次黑盒审计 + 7 次 Signature + 1 次大模型总结）。未获取到 signature 时会跳过
-回放请求，total 会变为 14；模型 ID 回退重试会相应增加 total。总结请求失败时仍会
+quick 正常为 9 次（8 次黑盒审计 + 1 次大模型总结）；Claude quick 正常为 16 次
+（8 次黑盒审计 + 7 次 Signature + 1 次大模型总结）。未获取到 signature 时会跳过
+回放请求，total 会变为 15；模型 ID 回退重试会相应增加 total。总结请求失败时仍会
 计入 error，并使用本地多语言兜底总结，不改变检测评分和判定。
 结构
 
@@ -229,7 +229,6 @@ detail.findings	array	所有适用且证据充分的探针、专项风险条件�
 detail.best_model	string	full 的最匹配模型；无结果时为空字符串
 detail.fingerprint	object	full 的后验概率、造假状态及分布动画数据；其他模式为空对象
 detail.test_info	object	延迟、生成速度、输入/输出 Token 和缓存读取汇总
-
 `detail.fingerprint` 在 full 成功完成时包含以下字段：
 
 字段	类型	说明
@@ -250,6 +249,7 @@ largest_deviation	object	差异最大的分桶，包含 `range`、`observed`、`
 `distribution_overlap` 和 `largest_deviation` 用于前端展示实测指纹与匹配基准之间的
 分布差异。
 
+detail.glitch_fingerprint	object	Glitch Token 的成功/失败编号及候选模型家族
 detail.findings[] 字段
 
 {
@@ -263,13 +263,13 @@ probe	string	探针标识
 severity	string	英文二值状态：`Passed` 或 `Failed`
 title	string	中性的检查项名称；不包含通过、失败或异常结论
 
-统一 findings 候选清单共定义 20 项：7 项基础探针状态、11 项专项风险条件、Claude
+统一 findings 候选清单共定义 22 项：8 项基础探针状态、12 项专项风险条件、Claude
 Signature 和模型指纹。只有检查适用且证据充分时才会返回：风险触发为
 `severity: "Failed"`，未触发为 `severity: "Passed"`；不适用、未实际执行或证据
 不足时不返回，不增加第三种状态。两种返回状态使用相同的中性 `title`。
 
-各模式最大返回数量为：quick 非 Claude 18 项、quick + Claude 19 项、full 非
-Claude 19 项、full + Claude 20 项。实际数量可能更少。例如身份响应无法识别模型
+各模式最大返回数量为：quick 非 Claude 20 项、quick + Claude 21 项、full 非
+Claude 21 项、full + Claude 22 项。实际数量可能更少。例如身份响应无法识别模型
 系列、流式响应未提供 model 字段，或者前置接口失败时，依赖这些证据的专项检查会
 被省略。Claude Signature 只有内部结果完整时才返回；任一已执行的内部检查失败，
 该项返回 `Failed`。模型指纹缺少后验概率或造假状态时同样不返回。

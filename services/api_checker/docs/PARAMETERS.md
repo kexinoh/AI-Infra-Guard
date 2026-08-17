@@ -25,7 +25,7 @@
 |------|----------|----------|----------|------|------|
 | **A. 随机数指纹** | OpenAI / Anthropic / Responses 均可 | 统计分布指纹 | 理论上可（但需海量样本对标） | 高（200+次采样） | 中 |
 | **B. 加密级 Signature** | 仅 Anthropic（Claude extended thinking） | AEAD 加密签名 + 10 项辅助 | **不可伪造**（加密级） | 低（1-2 分钟） | 低 |
-| **C. 黑盒审计 7 探针** | OpenAI 兼容中转站 | 篡改行为黑盒探测 | 探针可被识别规避（已做随机化） | 低（1 分钟内） | 低 |
+| **C. 黑盒审计 8 探针** | OpenAI 兼容中转站 | 篡改行为黑盒探测与 Glitch Token 弱指纹 | 探针可被识别规避（已做随机化） | 低（1 分钟内） | 低 |
 | **D. PAMELA 分布指纹** | OpenAI 兼容 API | 多任务、多语言单 token 分布 JSD | 需要系统性复现参考分布 | 高（默认约 400 次请求） | 中 |
 | **E. Ventor QTest** | 支持 `logprobs` 的 OpenAI 兼容 API | token 概率、信息熵与 Z-test | 取决于供应商的 logprobs 完整性 | 中 | 中 |
 
@@ -36,7 +36,7 @@
 ├─ 是 → 优先用 [B] 加密级 Signature（不可伪造，最可靠）
 │        可选叠加 [A] 随机数指纹做交叉验证
 └─ 否（OpenAI 兼容中转站）
-         → 用 [C] 黑盒审计 7 探针
+         → 用 [C] 黑盒审计 8 探针
          可选叠加 [A] 或 [D] 做模型识别
          需要比较多家供应商且端点支持 logprobs 时使用 [E]
 ```
@@ -293,7 +293,9 @@ Claude 的 extended thinking API 返回的 `signature` 是 base64 protobuf 封�
 
 ### 原理
 
-通过 7 个黑盒探针检测 OpenAI 兼容中转站的隐蔽篡改行为。纯标准库实现，API key 全程脱敏。
+源自腾讯朱雀实验室 A.I.G 的 `relay_mini_audit`，并扩展 Glitch Token
+模型家族弱指纹，共通过 8 个黑盒探针检测 OpenAI 兼容中转站的隐蔽篡改行为。
+纯标准库实现，API key 全程脱敏。
 
 ### 4.1 主审计函数：`run_relay_audit()`
 
@@ -307,7 +309,7 @@ Claude 的 extended thinking API 返回的 `signature` 是 base64 protobuf 封�
 | `on_progress` | `callable` | 否 | `None` | 每个探针完成后的回调 `fn(completed, total)` |
 | `on_request_progress` | `callable` | 否 | `None` | 每个实际 HTTP 请求完成后的回调 `fn(completed, total, success, error)` |
 
-默认执行完整 7 探针。
+默认执行完整 8 探针。
 
 **输出**：`dict`
 
@@ -327,17 +329,50 @@ Claude 的 extended thinking API 返回的 `signature` 是 base64 protobuf 封�
 | 40–69 | `MEDIUM` | 中风险 |
 | 70–100 | `HIGH` | 高风险 |
 
-### 4.2 7 个探针明细
+### 4.2 8 个探针明细
 
 | # | 探针函数 | 检测什么 | 触发条件 | 加分 | 严重度 |
 |---|----------|----------|----------|------|--------|
 | 1 | `probe_models` | GET /v1/models 列表一致性 | 端点失败/目标模型缺失 | +20 | MEDIUM |
 | 2 | `probe_liveness` | 精确 echo 可用性 | 不可用/echo 被改写 | +50/+5 | HIGH/LOW |
 | 3 | `probe_identity` | 模型身份弱信号 | 自报家族不匹配/model 字段不一致 | +15 | LOW |
-| 4 | `probe_token_delta` | 隐藏 prompt 注入 | prompt_tokens delta > 200 | +25 | MEDIUM |
-| 5 | `probe_echo_rewrite` | 输出/命令改写 | pip 命令被篡改 | +35 | HIGH |
-| 6 | `probe_stream_integrity` | SSE 流式完整性 | 无 [DONE]/JSON 损坏/流内 model 不一致 | +20/+30 | MEDIUM |
-| 7 | `probe_context_canary` | 上下文截断 | 尾部 canary 丢失 | +20 | MEDIUM |
+| 4 | `probe_glitch_fingerprint` | 15 项 Glitch Token 家族弱指纹 | 精确错误编号签名与请求家族不符 | +15 | LOW |
+| 5 | `probe_token_delta` | 隐藏 prompt 注入 | prompt_tokens delta > 200 | +25 | MEDIUM |
+| 6 | `probe_echo_rewrite` | 输出/命令改写 | pip 命令被篡改 | +35 | HIGH |
+| 7 | `probe_stream_integrity` | SSE 流式完整性 | 无 [DONE]/JSON 损坏/流内 model 不一致 | +20/+30 | MEDIUM |
+| 8 | `probe_context_canary` | 上下文截断 | 尾部 canary 丢失 | +20 | MEDIUM |
+
+Glitch Token 探针只要求模型逐项复述，不要求解释、翻译或说明含义。匹配时忽略
+展示层空白和引号，记录未能精确复述的编号，再与以下观察签名比较：
+
+| 错误编号 | 候选家族 |
+|---|---|
+| 1 | MiMo（MiMo v2.5 可能已不再复现） |
+| 2、9 | MiniMax |
+| 3、14 | GLM |
+| 4、10 | Qwen |
+| 5、11、12 | Kimi |
+| 6、13 | DeepSeek |
+| 7、15 | Gemini |
+| 8 | GPT |
+
+第 8 项原文为“给 主 人 留 下 些 什么吧”去掉空格后的字符串。该方法会受模型版本、
+服务端 Prompt 和生成随机性影响，因此只作为弱指纹。当前实现接受同一家族已知
+签名的唯一子集，以兼容版本漂移；失败编号不得跨越多个家族，且候选家族和请求模型
+家族冲突时，才产生 LOW 风险发现。对于 GPT 在第 8 项输出空编号后正常停止的行为，
+只有 1–7 均精确匹配、编号连续且 `finish_reason=stop` 时才按错误 8 分析。
+
+2026-07-31 关闭推理后的 OpenRouter 实测结果：
+
+| 模型 | 失败编号 |
+|---|---|
+| MiniMax M3 | 2 |
+| GLM-5 | 14 |
+| Qwen 3.5 397B-A17B | 4 |
+| Kimi K2.5 | 5、11 |
+| DeepSeek V3.2 | 13 |
+| Gemini 2.5 Flash | 无 |
+| GPT-4.1-mini | 8（输出空的 `8.` 后正常停止） |
 
 ### 4.3 Finding 数据结构
 
@@ -537,11 +572,11 @@ Anthropic 的 `cache_read_input_tokens`、Chat Completions 的
 `detail.findings[]` 只返回适用且证据充分的探针及专项风险条件；`severity` 使用英文
 二值状态 `Passed`/`Failed`。证据不足、未执行或不适用的检查直接省略，不引入第三
 种状态。无论状态如何，`title` 都只返回中性的检查项名称，不包含“通过”“失败”
-“异常”等结论，列表图标可直接由 `severity` 决定。统一候选清单共定义 20 项；
-7 个黑盒探针对应最多 18 项审计检查（7 项基础状态 + 11 项专项条件），Claude
+“异常”等结论，列表图标可直接由 `severity` 决定。统一候选清单共定义 22 项；
+8 个黑盒探针对应最多 20 项审计检查（8 项基础状态 + 12 项专项条件），Claude
 Signature 和 full 模式模型指纹分别作为 `probe: "signature"`、
 `probe: "fingerprint"` 追加。因此四种组合的最大返回数量依次为：quick 非 Claude
-18 项、quick + Claude 19 项、full 非 Claude 19 项、full + Claude 20 项；实际数量
+20 项、quick + Claude 21 项、full 非 Claude 21 项、full + Claude 22 项；实际数量
 取决于本轮获得的有效证据。
 黑盒审计对单个上游 HTTP 请求设置 60 秒总时限，并对整轮 quick 审计设置
 180 秒总时限，避免上游持续发送少量数据时绕过普通 socket 读超时。

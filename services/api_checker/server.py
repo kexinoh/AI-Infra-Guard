@@ -11,7 +11,7 @@ algorithm 字段：
   full  → 算法A 随机数指纹 + 算法C 黑盒审计
           模型 ID 含 sonnet/opus/haiku/fable 时自动识别为 Claude：
           协议切到 anthropic，并【自动叠加】算法B 加密级 signature 检测
-  quick → 算法C 黑盒审计 7 探针（OpenAI 兼容中转站）
+  quick → 算法C 黑盒审计 8 探针（OpenAI 兼容中转站）
           选 quick 且模型 ID 识别为 Claude 时，【自动叠加】算法B 加密级 signature 检测
           （B 仅限 Anthropic，不单独暴露，识别到 Claude 默认启动）
 
@@ -100,7 +100,7 @@ FINGERPRINT_CONCURRENCY = 5
 FINGERPRINT_MAX_DEDUCTION = 30.0
 FINGERPRINT_INCOMPLETE_SCORE = 50.0
 AUDIT_PROFILE = "full"
-QUICK_AUDIT_REQUEST_COUNT = 7
+QUICK_AUDIT_REQUEST_COUNT = 8
 SUMMARY_REQUEST_COUNT = 1
 
 
@@ -202,6 +202,10 @@ PROBE_CHECK_TITLE = {
         "zh": "模型身份检查",
         "en": "Model identity check",
     },
+    "glitch_fingerprint": {
+        "zh": "Glitch Token 弱指纹检查",
+        "en": "Glitch token fingerprint check",
+    },
     "token_delta": {
         "zh": "提示词 Token 差异检查",
         "en": "Prompt token delta check",
@@ -239,6 +243,10 @@ FINDING_TITLE_TEXT = {
     "Model identity family mismatch": {
         "zh": "模型身份系列不匹配",
         "en": "Model identity family mismatch",
+    },
+    "Glitch token family mismatch": {
+        "zh": "Glitch Token 弱指纹家族不匹配",
+        "en": "Glitch token family mismatch",
     },
     "Large prompt token delta": {
         "zh": "提示词 Token 数量偏差过大",
@@ -304,6 +312,14 @@ SPECIALIZED_RISK_CHECKS = [
         "title": {
             "zh": "模型身份系列匹配检查",
             "en": "Model identity family match check",
+        },
+    },
+    {
+        "probe": "glitch_fingerprint",
+        "failed_title": "Glitch token family mismatch",
+        "title": {
+            "zh": "Glitch Token 弱指纹家族匹配检查",
+            "en": "Glitch token family match check",
         },
     },
     {
@@ -784,7 +800,7 @@ def _run_signature(req: DetectRequest, base_url: str, cancel_event=None,
 
 def _run_audit(req: DetectRequest, base_url: str, cancel_event=None,
                on_progress=None, api_type="openai") -> dict:
-    """算法 C：黑盒审计 7 探针。base_url 由调度层归一化后传入。
+    """算法 C：黑盒审计 8 探针。base_url 由调度层归一化后传入。
     返回极简：判定 + 评分 + 风险发现（仅严重度+标题）。"""
     def progress(completed, total, success, error):
         if on_progress:
@@ -807,11 +823,27 @@ def _run_audit(req: DetectRequest, base_url: str, cancel_event=None,
     )
     _raise_if_cancelled(cancel_event)
     test_info = _audit_test_info(result["probe_results"])
+    glitch = next(
+        (probe for probe in result["probe_results"]
+         if probe.name == "glitch_fingerprint"),
+        None,
+    )
     return {
         "verdict": result["verdict"],
         "_risk_score": result["score"],
         "_resolved_model": result.get("resolved_model") or req.model,
         "test_info": test_info,
+        "glitch_fingerprint": ({
+            "complete": glitch.data.get("complete", False),
+            "analyzable": glitch.data.get("analyzable", False),
+            "early_stop_index": glitch.data.get("early_stop_index"),
+            "finish_reason": glitch.data.get("finish_reason"),
+            "numbered_indices": glitch.data.get("numbered_indices", []),
+            "matched_indices": glitch.data.get("matched_indices", []),
+            "failed_indices": glitch.data.get("failed_indices", []),
+            "best_family": glitch.data.get("best_family"),
+            "candidate_families": glitch.data.get("candidate_families", []),
+        } if glitch else {}),
         "findings": [{"probe": f.probe, "severity": f.severity, "title": f.title}
                      for f in result["findings"]],
         "probe_results": [{
@@ -932,6 +964,8 @@ def _base_probe_evaluable(probe_result: dict) -> bool:
             _successful_probe_response(data)
             and bool(str(data.get("identity_text") or "").strip())
         )
+    if probe == "glitch_fingerprint":
+        return data.get("analyzable") is True
     if probe == "token_delta":
         return (
             _successful_probe_response(data)
@@ -988,6 +1022,15 @@ def _specialized_risk_evaluable(
             bool(probe_result.get("ok"))
             and bool(data.get("requested_families"))
             and bool(data.get("identity_families"))
+        )
+    if failed_title == "Glitch token family mismatch":
+        candidates = data.get("candidate_families") or []
+        return (
+            bool(probe_result.get("ok"))
+            and bool(data.get("requested_families"))
+            and bool(data.get("best_family"))
+            and bool(candidates)
+            and bool(candidates[0].get("consistent"))
         )
     if failed_title == "Large prompt token delta":
         return (
@@ -1296,6 +1339,7 @@ def _result_detail(
         "best_model": "",
         "fingerprint": {},
         "test_info": parts.get("audit", {}).get("test_info", {}),
+        "glitch_fingerprint": parts.get("audit", {}).get("glitch_fingerprint", {}),
     }
     if algorithm == "full" and parts.get("fingerprint"):
         fingerprint = parts["fingerprint"]

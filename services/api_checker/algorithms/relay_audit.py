@@ -1,11 +1,13 @@
 """
 算法 C：中转站黑盒审计（OpenAI 兼容通用）
 ==========================================
-通过 7 个探针检测中转站篡改行为，使用纯标准库 urllib 实现。
+源自腾讯朱雀实验室 A.I.G（Apache-2.0），并扩展 glitch token 弱指纹探针。
+纯标准库 urllib 实现。
 """
 
 import json
 import random
+import re
 import string
 import threading
 import time
@@ -30,6 +32,7 @@ FAMILY_ALIASES = {
     "openai": ["openai", "gpt", "o1", "o3", "o4", "chatgpt"],
     "anthropic": ["anthropic", "claude", "sonnet", "opus", "haiku"],
     "google": ["google", "gemini", "palm", "bard"],
+    "mimo": ["mimo"], "minimax": ["minimax"],
     "qwen": ["qwen", "tongyi"], "deepseek": ["deepseek"],
     "zhipu": ["glm", "zhipu", "chatglm"], "moonshot": ["kimi", "moonshot"],
     "bytedance": ["doubao"], "baidu": ["ernie", "wenxin"],
@@ -51,16 +54,48 @@ _REAL_PIP_COMMANDS = [
     "pip install torch==2.1.2", "pip install fastapi==0.109.0",
 ]
 
+GLITCH_TOKENS = [
+    ".DataGridViewColumnHeadersHeightSizeMode",
+    "日以上更新していないブログに表示しています",
+    "锅内倒入植物油烧热",
+    "开通天眼生意通银牌及以上会员",
+    "百度百科内容由网友共同编辑",
+    "EDMFunc",
+    "StarSrvGroupBody",
+    "给主人留下些什么吧",
+    "方も多いのではないでしょうか",
+    "转载请附上原文出处链接和本声明",
+    "不代表新浪看点观点或立场",
+    "豫冠薰衣草疤痕精华素",
+    "请问 everydaycalculation是什么意思",
+    "百度百科企业词条极速创建通道",
+    "intFragmentation",
+]
+
+# 已观察到的 glitch token 错误编号。该信号依赖模型版本，只能作为弱指纹使用。
+# 例如 MiMo v2.5 已可能不再复现编号 1，因此匹配时同时保留 overlap 信息。
+GLITCH_FAMILY_SIGNATURES = {
+    "mimo": {1},
+    "minimax": {2, 9},
+    "zhipu": {3, 14},
+    "qwen": {4, 10},
+    "moonshot": {5, 11, 12},
+    "deepseek": {6, 13},
+    "google": {7, 15},
+    "openai": {8},
+}
+
 PROBE_NAMES = {
     "models": "模型列表一致性", "liveness": "基础聊天可用性",
-    "identity": "模型身份弱信号", "token_delta": "隐藏prompt注入",
+    "identity": "模型身份弱信号", "glitch_fingerprint": "Glitch Token 弱指纹",
+    "token_delta": "隐藏prompt注入",
     "echo_rewrite": "输出改写检测", "stream_integrity": "流式完整性",
     "context_canary": "上下文截断",
 }
 PROFILES = {
-    "quick": ["models", "liveness", "identity"],
-    "standard": ["models", "liveness", "identity", "token_delta", "echo_rewrite", "stream_integrity"],
-    "full": ["models", "liveness", "identity", "token_delta", "echo_rewrite", "stream_integrity", "context_canary"],
+    "quick": ["models", "liveness", "identity", "glitch_fingerprint"],
+    "standard": ["models", "liveness", "identity", "glitch_fingerprint", "token_delta", "echo_rewrite", "stream_integrity"],
+    "full": ["models", "liveness", "identity", "glitch_fingerprint", "token_delta", "echo_rewrite", "stream_integrity", "context_canary"],
 }
 
 
@@ -314,6 +349,7 @@ def _chat(
     stream=False,
     api_type="openai",
     on_request=None,
+    extra_body=None,
 ):
     candidates = _model_candidates(model)
     total_latency = 0
@@ -334,6 +370,8 @@ def _chat(
                 "stream": stream,
             }
             endpoint = "chat/completions"
+        if extra_body:
+            body.update(extra_body)
         if temp is not None:
             body["temperature"] = temp
         status, payload, latency = _http_json(
@@ -349,7 +387,7 @@ def _chat(
     return status, payload, total_latency, candidates[-1]
 
 
-# ---- 7 个探针 ----
+# ---- 8 个探针 ----
 def probe_models(base_url, key, model, api_type="openai", on_request=None):
     try:
         status, payload, lat = _http_json(
@@ -399,6 +437,163 @@ def probe_identity(base_url, key, model, api_type="openai", on_request=None):
              "resolved_model": resolved_model})
     except Exception as e:
         return ProbeResult("identity", False, None, error=str(e))
+
+
+def _normalize_glitch_text(text):
+    """忽略展示层空白和引号，只匹配 token 本身，不做语义判断。"""
+    return re.sub(r'[\s"“”]+', "", text or "").lower()
+
+
+def _match_glitch_families(failed_indices):
+    failed = set(failed_indices)
+    ranked = []
+    for family, signature in GLITCH_FAMILY_SIGNATURES.items():
+        overlap = len(failed & signature)
+        if not overlap:
+            continue
+        consistent = bool(failed) and failed <= signature
+        ranked.append({
+            "family": family,
+            "matched_indices": sorted(failed & signature),
+            "signature_indices": sorted(signature),
+            "exact": failed == signature,
+            "consistent": consistent,
+            "coverage": round(overlap / len(signature), 3),
+            "confidence": round(overlap / len(failed), 3),
+        })
+    return sorted(
+        ranked,
+        key=lambda item: (
+            item["exact"],
+            item["consistent"],
+            item["confidence"],
+            item["coverage"],
+        ),
+        reverse=True,
+    )
+
+
+def _glitch_numbered_indices(text):
+    return sorted({
+        int(match)
+        for match in re.findall(r"(?m)^\s*(\d{1,2})\s*[.)、．]\s*", text or "")
+        if 1 <= int(match) <= len(GLITCH_TOKENS)
+    })
+
+
+def _glitch_numbered_text(text):
+    sections = {}
+    matches = list(re.finditer(r"(?m)^\s*(\d{1,2})\s*[.)、．]\s*", text or ""))
+    for position, match in enumerate(matches):
+        index = int(match.group(1))
+        if not 1 <= index <= len(GLITCH_TOKENS):
+            continue
+        end = matches[position + 1].start() if position + 1 < len(matches) else len(text)
+        sections[index] = text[match.end():end].strip()
+    return sections
+
+
+def probe_glitch_fingerprint(
+    base_url,
+    key,
+    model,
+    api_type="openai",
+    on_request=None,
+):
+    numbered = "\n".join(f"{i}. {token}" for i, token in enumerate(GLITCH_TOKENS, 1))
+    prompt = (
+        "请逐项复述下面的内容。不要解释、翻译或改写；保留编号，每项单独一行：\n"
+        f"{numbered}"
+    )
+    try:
+        status, payload, lat, resolved_model = _chat(
+            base_url,
+            key,
+            model,
+            [{"role": "user", "content": prompt}],
+            1536,
+            extra_body={
+                "reasoning": {"enabled": False},
+                "include_reasoning": False,
+            },
+            api_type=api_type,
+            on_request=on_request,
+        )
+        # 部分 OpenAI 兼容端点会拒绝 OpenRouter 风格的关闭推理参数。
+        if status == 400:
+            status, payload, lat, resolved_model = _chat(
+                base_url,
+                key,
+                model,
+                [{"role": "user", "content": prompt}],
+                1536,
+                api_type=api_type,
+                on_request=on_request,
+            )
+        text = _extract_text(payload).strip()
+        finish_reason = _finish_reason(payload)
+        numbered_indices = _glitch_numbered_indices(text)
+        numbered_text = _glitch_numbered_text(text)
+        complete = (
+            200 <= status < 300
+            and bool(text)
+            and finish_reason != "length"
+            and numbered_indices == list(range(1, len(GLITCH_TOKENS) + 1))
+        )
+        attempted_matches = [
+            i for i, token in enumerate(GLITCH_TOKENS, 1)
+            if i in numbered_text
+            and _normalize_glitch_text(token) in _normalize_glitch_text(numbered_text[i])
+        ]
+        # GPT-4.1-mini 等模型会在第 8 项输出空的“8.”后以 stop 正常结束。
+        # 当前 1..n 必须连续、此前全部匹配，才能将 n 作为可分析的早停错误。
+        early_stop_index = numbered_indices[-1] if numbered_indices else None
+        analyzable_early_stop = (
+            200 <= status < 300
+            and finish_reason == "stop"
+            and early_stop_index is not None
+            and numbered_indices == list(range(1, early_stop_index + 1))
+            and attempted_matches == list(range(1, early_stop_index))
+            and early_stop_index not in attempted_matches
+            and any(
+                early_stop_index in signature
+                for signature in GLITCH_FAMILY_SIGNATURES.values()
+            )
+        )
+        analyzable = complete or analyzable_early_stop
+        matched = attempted_matches if analyzable else []
+        failed = (
+            [i for i in range(1, len(GLITCH_TOKENS) + 1) if i not in matched]
+            if complete
+            else ([early_stop_index] if analyzable_early_stop else [])
+        )
+        candidates = _match_glitch_families(failed) if analyzable else []
+        return ProbeResult(
+            "glitch_fingerprint",
+            analyzable,
+            lat,
+            {
+                "status": status,
+                "complete": complete,
+                "analyzable": analyzable,
+                "early_stop_index": (
+                    early_stop_index if analyzable_early_stop else None
+                ),
+                "finish_reason": finish_reason,
+                "numbered_indices": numbered_indices,
+                "matched_indices": matched,
+                "failed_indices": failed,
+                "candidate_families": candidates,
+                "best_family": candidates[0]["family"] if candidates else None,
+                "requested_families": _infer_families(model),
+                "response_model": payload.get("model"),
+                "usage": payload.get("usage"),
+                "resolved_model": resolved_model,
+                "actual": text[:2000],
+            },
+        )
+    except Exception as e:
+        return ProbeResult("glitch_fingerprint", False, None, error=str(e))
 
 
 def probe_token_delta(base_url, key, model, api_type="openai", on_request=None):
@@ -531,6 +726,7 @@ def probe_context_canary(base_url, key, model, api_type="openai", on_request=Non
 
 
 _PROBES = {"models": probe_models, "liveness": probe_liveness, "identity": probe_identity,
+           "glitch_fingerprint": probe_glitch_fingerprint,
            "token_delta": probe_token_delta, "echo_rewrite": probe_echo_rewrite,
            "stream_integrity": probe_stream, "context_canary": probe_context_canary}
 
@@ -559,6 +755,30 @@ def build_findings(results, requested_model):
         pf = ident.data.get("identity_families") or _infer_families(text)
         if rf and pf and not (set(rf) & set(pf)):
             findings.append(Finding("identity", "LOW", 15, "Model identity family mismatch", json.dumps({"requested": rf, "reported": pf, "text": text}), "弱信号，需佐证"))
+    glitch = by.get("glitch_fingerprint")
+    if glitch and glitch.ok:
+        requested = set(_infer_families(requested_model))
+        best = glitch.data.get("best_family")
+        candidates = glitch.data.get("candidate_families") or []
+        best_match = candidates[0] if candidates else {}
+        if (
+            requested
+            and best
+            and best not in requested
+            and best_match.get("consistent")
+        ):
+            findings.append(Finding(
+                "glitch_fingerprint",
+                "LOW",
+                15,
+                "Glitch token family mismatch",
+                json.dumps({
+                    "requested": sorted(requested),
+                    "reported": best,
+                    "failed_indices": glitch.data.get("failed_indices", []),
+                }),
+                "版本相关弱指纹，需结合其他探针佐证",
+            ))
     delta = by.get("token_delta")
     if delta and delta.ok:
         d = delta.data.get("delta")

@@ -77,7 +77,7 @@ Jensen–Shannon 散度，排名最前即指纹最接近的模型。候选分布
 | 10 | token 计数校验 | 辅助 | input/output token 比例合理性 |
 | 11 | 延迟特征 | 辅助 | 原生 API vs 中转的延迟差异模式 |
 
-### C. 中转站黑盒审计（7 探针）
+### C. 中转站黑盒审计（8 探针，源自朱雀实验室 A.I.G）
 
 适用于 OpenAI 兼容中转站（`/v1/models`、`/v1/chat/completions` 或
 `/v1/responses`）：
@@ -87,15 +87,16 @@ Jensen–Shannon 散度，排名最前即指纹最接近的模型。候选分布
 | 1 | models | GET /v1/models 列表一致性 | 目标模型缺失；模型数异常 |
 | 2 | liveness | 基础聊天可用性（精确 echo） | 返回被改写（中）；不可用（高） |
 | 3 | identity | 模型身份弱信号 | 自报家族与所购模型不符 |
-| 4 | token_delta | 隐藏 prompt / token 注入 | 短 prompt 的 prompt_tokens 异常偏高 |
-| 5 | echo_rewrite | 输出改写 / 工具命令篡改 | pip install 被改成换源/curl/eval |
-| 6 | stream_integrity | SSE 流式完整性 | 无 [DONE]、JSON 损坏、流内 model 不一致 |
-| 7 | context_canary | 上下文截断 | 尾部 canary 丢失 |
+| 4 | glitch_fingerprint | Glitch Token 模型家族弱指纹 | 15 项复述错误编号命中已知家族签名 |
+| 5 | token_delta | 隐藏 prompt / token 注入 | 短 prompt 的 prompt_tokens 异常偏高 |
+| 6 | echo_rewrite | 输出改写 / 工具命令篡改 | pip install 被改成换源/curl/eval |
+| 7 | stream_integrity | SSE 流式完整性 | 无 [DONE]、JSON 损坏、流内 model 不一致 |
+| 8 | context_canary | 上下文截断 | 尾部 canary 丢失 |
 
 - 纯 Python 标准库，无第三方依赖
 - API key 全程脱敏，不回显
 - 随机化探针 prompt，避免被识别规避
-- 执行 7 个黑盒探针
+- 执行 8 个黑盒探针
 
 ## 安装
 
@@ -128,7 +129,7 @@ AIG 统一命令入口为 `ai-infra-guard api-checker ...`（别名
 python main.py calibrate   # 标定官方模型基准（随机数指纹）
 python main.py test        # 测试第三方 API（随机数指纹匹配）
 python main.py detect      # 中转站加密级检测（thinking signature）
-python main.py audit       # 中转站黑盒审计（7 探针）
+python main.py audit       # 中转站黑盒审计（8 探针）
 python main.py pamela      # PAMELA 单token分布指纹匹配（JSD）
 python main.py qtest run   # Ventor QTest（使用内置默认配置）
 python main.py qtest run --config path/to/config.yaml
