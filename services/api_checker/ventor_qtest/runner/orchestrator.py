@@ -112,6 +112,10 @@ class UnifiedClient:
         self.extra_payload = dict(conf.get("extra_payload", {}))
         self.timeout = conf.get("timeout", timeout)
         self.max_tokens = conf.get("max_tokens", 400)
+        # Repeated-request AFL uses an exact, total outcome map.  Keep the
+        # historical stripped response everywhere else, but let that runner
+        # preserve whitespace and other nonconforming output verbatim.
+        self.strip_response = bool(conf.get("strip_response", True))
         self.max_retries = max(0, int(conf.get("max_retries", 2)))
         self.retry_backoff_sec = max(0.0, float(conf.get("retry_backoff_sec", 1.0)))
 
@@ -256,8 +260,8 @@ class UnifiedClient:
                 except Exception as exc:
                     raise SkipVendor(self.name, status, f"invalid JSON: {exc}", body=response.text[:200]) from None
 
-                text = self._extract_openai_text(data).strip()
-                return text
+                text = self._extract_openai_text(data)
+                return text.strip() if self.strip_response else text
 
             raise SkipVendor(self.name, None, "request error")
 
@@ -326,7 +330,8 @@ class UnifiedClient:
                     for part in parts
                     if isinstance(part, dict) and part.get("type") == "text"
                 ]
-                return "\n".join(t for t in texts if t).strip()
+                text = "\n".join(t for t in texts if t)
+                return text.strip() if self.strip_response else text
 
             raise SkipVendor(self.name, None, "request error")
 

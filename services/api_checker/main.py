@@ -285,6 +285,7 @@ def qtest_flow():
     print("命令示例:")
     print("  python main.py qtest run")
     print("  python main.py qtest run --config path/to/config.yaml")
+    print("  python main.py qtest afl-run --config path/to/afl.yaml")
     print("  python main.py qtest openrouter-providers --model moonshotai/kimi-k2.5")
     print("  python main.py qtest openrouter-run --openrouter-model moonshotai/kimi-k2.5 ...")
 

@@ -27,7 +27,7 @@
 | **B. 加密级 Signature** | 仅 Anthropic（Claude extended thinking） | AEAD 加密签名 + 10 项辅助 | **不可伪造**（加密级） | 低（1-2 分钟） | 低 |
 | **C. 黑盒审计 8 探针** | OpenAI 兼容中转站 | 篡改行为黑盒探测与 Glitch Token 弱指纹 | 探针可被识别规避（已做随机化） | 低（1 分钟内） | 低 |
 | **D. PAMELA 分布指纹** | OpenAI 兼容 API | 多任务、多语言单 token 分布 JSD | 需要系统性复现参考分布 | 高（默认约 400 次请求） | 中 |
-| **E. Ventor QTest** | 支持 `logprobs` 的 OpenAI 兼容 API | token 概率、信息熵与 Z-test | 取决于供应商的 logprobs 完整性 | 中 | 中 |
+| **E. Ventor QTest** | OpenAI 兼容目标 API；可信参考需支持 `logprobs` | 重复请求 AFL + 长序列 EFL | 取决于目标文本分布和参考概率质量 | 中至高 | 中 |
 
 ### 选择建议
 
@@ -439,15 +439,22 @@ PAMELA 使用 10 个 study-A 任务和多语言单 token 回答构建候选分�
 
 ## 6. 算法 E：Ventor QTest 供应商一致性检验
 
-Ventor QTest 使用端点返回的 `logprobs` 计算 token 概率和信息熵，通过 Z-test 量化待测供应商与参考分布的一致性。该算法通过独立配置执行，结果写入配置指定的结果和汇总目录。
+Ventor QTest 提供两个不同单位、不能直接相加的观测量：
+
+- 长序列 EFL：目标独立生成长序列，可信参考逐位置重评分，保留运行级偏离分布及其上尾；
+- 重复请求 AFL：对预先声明的有限类别上下文重复请求目标接口，仅用返回文本计数重建分布，再计算参数化零假设偏差校正的平均 coarsened-KL。
+
+目标接口运行 AFL 时不需要返回 `logprobs`，只有可信参考接口需要。两种方法均通过独立配置执行，结果写入配置指定的结果目录。
 
 | 子命令 | 说明 |
 |--------|------|
 | `qtest run [--config PATH]` | 按 JSON/YAML 配置运行测试并生成报告 |
+| `qtest afl-run [--config PATH]` | 运行重复请求 AFL；`repeated-run` 是等价别名 |
 | `qtest openrouter-providers [--model ID]` | 查询 OpenRouter 上指定模型的 provider |
 | `qtest openrouter-run [参数...]` | 自动发现 provider、运行测试并生成汇总 |
 
-完整配置字段见 `ventor_qtest/config/default.yaml`；CLI 的 `--help` 是参数的权威来源。
+长序列和 AFL 的完整配置分别见 `ventor_qtest/config/default.yaml` 与
+`ventor_qtest/config/afl.yaml`；CLI 的 `--help` 是参数的权威来源。
 
 ---
 

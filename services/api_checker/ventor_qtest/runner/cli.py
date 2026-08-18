@@ -354,6 +354,32 @@ def main(argv: List[str] | None = None) -> int:
         help="配置文件路径（支持 JSON/YAML）",
     )
 
+    afl_parser = subparsers.add_parser(
+        "afl-run",
+        aliases=["repeated-run"],
+        help="执行重复请求 AFL（Average Fidelity Loss）测试",
+    )
+    afl_parser.add_argument(
+        "--config",
+        default=str(Path(__file__).resolve().parents[1] / "config" / "afl.yaml"),
+        help="AFL 配置文件路径（支持 JSON/YAML）",
+    )
+    afl_parser.add_argument(
+        "--output",
+        default="",
+        help="覆盖配置中的结果 JSON 路径",
+    )
+    afl_parser.add_argument(
+        "--checkpoint",
+        default="",
+        help="覆盖配置中的断点文件路径",
+    )
+    afl_parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="忽略已有断点并重新采集",
+    )
+
     providers_parser = subparsers.add_parser(
         "openrouter-providers",
         help="从 OpenRouter 自动获取模型的 provider 列表",
@@ -562,6 +588,21 @@ def main(argv: List[str] | None = None) -> int:
         if report_conf:
             agg_count, run_count = _summarize_reports(report_conf)
             print(f"\n[ok] 汇总已完成：{agg_count} 家供应商，{run_count} 条运行记录。")
+        return 0
+
+    if args.command in {"afl-run", "repeated-run"}:
+        from .repeated import run_repeated_request
+
+        config = _load_config(Path(args.config))
+        afl_config = config.get("afl", config)
+        if not isinstance(afl_config, dict):
+            raise ValueError("AFL 配置必须是对象")
+        run_repeated_request(
+            afl_config,
+            output=args.output or None,
+            checkpoint=args.checkpoint or None,
+            resume=not args.no_resume,
+        )
         return 0
 
     if args.command == "openrouter-providers":

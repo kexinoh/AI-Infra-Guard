@@ -56,10 +56,11 @@ Jensen–Shannon 散度，排名最前即指纹最接近的模型。候选分布
 
 ### E. Ventor QTest 供应商一致性量化检验
 
-内置 [Ventor QTest](https://github.com/kexinoh/ventor_qtest)，通过参考模型的
-`logprobs` 逐位置计算信息熵、信息方差与 Z 分数，用于比较同一模型在不同 API
-供应商上的概率分布一致性。该模块使用独立配置与结果目录，不改变已有 A/B/C/D
-算法、基准文件或 HTTP SSE 接口。
+内置 [Ventor QTest](https://github.com/kexinoh/ventor_qtest)，同时提供两个互补
+方法：长序列 EFL 通过可信参考逐位置重评分并观察运行级偏离的上尾；重复请求 AFL
+只读取目标接口返回的文本，通过类别计数重建输出分布并计算有限样本偏差校正的
+coarsened-KL。两种方法都只要求可信参考接口提供 `logprobs`。该模块使用独立配置
+与结果目录，不改变已有 A/B/C/D 算法、基准文件或 HTTP SSE 接口。
 
 ### B. 中转站加密级检测（11 项）
 
@@ -133,6 +134,7 @@ python main.py audit       # 中转站黑盒审计（8 探针）
 python main.py pamela      # PAMELA 单token分布指纹匹配（JSD）
 python main.py qtest run   # Ventor QTest（使用内置默认配置）
 python main.py qtest run --config path/to/config.yaml
+python main.py qtest afl-run --config path/to/afl.yaml
 python main.py qtest openrouter-providers --model moonshotai/kimi-k2.5
 python main.py list        # 查看已保存基准
 ```
